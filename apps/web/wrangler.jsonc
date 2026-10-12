@@ -1,0 +1,17 @@
+// Cloudflare deployment of the web app: a Worker serving the built files as
+// static assets at app.fade.finance. Files are served first; only requests
+// that match none reach worker/index.ts, which serves index.html for app
+// routes and a real 404 for missing files (a stale chunk must not come back
+// as HTML). public/_headers marks the hashed chunks immutable.
+// Deploy with: pnpm --filter ./apps/web build && npx wrangler@4.147.0 deploy --config apps/web/wrangler.jsonc
+{
+  "name": "fade-app",
+  "compatibility_date": "2026-10-01",
+  "main": "./worker/index.ts",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+  },
+  "routes": [{ "pattern": "app.fade.finance", "custom_domain": true }],
+}

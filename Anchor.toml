@@ -1,0 +1,26 @@
+# Only the package manager is declared here. `solana_version` / `anchor_version`
+# are deliberately absent: they make anchor call agave-install and avm, which
+# rewrite global state shared with other projects. Versions live in toolchain.env.
+[toolchain]
+package_manager = "pnpm"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+fade = "HeuXg1Fn2R7TzzATextZjwySFq1m4YBgUdvXqbQuojsL"
+test_integrator = "Ez5aCv6q5XgKuvx2Vot2RdQwz7DHUDULCbE9bEXVktc3"
+toolchain_smoke = "3FLR2XiNRr4WYT8qeac3zu2Xeo6qGvAirtdH9ZNhKC7T"
+
+[programs.devnet]
+fade = "GqWqMEubSHgrqJCZ9zPfMHq6uQPZkr6EbiBy78j7engt"
+test_integrator = "Ez5aCv6q5XgKuvx2Vot2RdQwz7DHUDULCbE9bEXVktc3"
+toolchain_smoke = "3FLR2XiNRr4WYT8qeac3zu2Xeo6qGvAirtdH9ZNhKC7T"
+
+[provider]
+cluster = "localnet"
+wallet = "keys/deployer.json"
+
+[test]
+upgradeable = false

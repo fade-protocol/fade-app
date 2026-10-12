@@ -1,0 +1,3 @@
+# Full local gate. CI runs the same steps; this hook is the first line.
+set -e
+bash scripts/toolchain/with-toolchain.sh bash scripts/verify.sh

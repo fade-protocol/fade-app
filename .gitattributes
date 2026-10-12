@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.so binary
+*.json linguist-generated=false
+clients/js/src/generated/** linguist-generated=true
+idls/** linguist-generated=true

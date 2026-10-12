@@ -1,0 +1,10 @@
+target/
+node_modules/
+idls/
+clients/js/src/generated/
+pnpm-lock.yaml
+*.md
+# generated data: written by scripts, not hand-edited
+crates/fade-math/tests/vectors/
+tests/fixtures/
+apps/web/dist/

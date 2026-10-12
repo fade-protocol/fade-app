@@ -1,0 +1,15 @@
+// Cloudflare deployment of the landing page: a Worker serving static files at
+// fade.finance, www.fade.finance included. No build step.
+// Deploy with: npx wrangler@4.147.0 deploy --config apps/landing/wrangler.jsonc
+{
+  "name": "fade-landing",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page",
+  },
+  "routes": [
+    { "pattern": "fade.finance", "custom_domain": true },
+    { "pattern": "www.fade.finance", "custom_domain": true },
+  ],
+}

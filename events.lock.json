@@ -1,0 +1,88 @@
+{
+  "ClaimDelivered": {
+    "version": 1,
+    "shape": "1ea18c1a5aa7bc1f"
+  },
+  "DepositClaimed": {
+    "version": 1,
+    "shape": "2a4eac69fe418b51"
+  },
+  "DepositRequested": {
+    "version": 1,
+    "shape": "eb1463bdd3dcc060"
+  },
+  "EpochStruck": {
+    "version": 1,
+    "shape": "c2856dba4fad4480"
+  },
+  "Initialized": {
+    "version": 1,
+    "shape": "ab5a198a3437c4be"
+  },
+  "IntegratorCreated": {
+    "version": 1,
+    "shape": "ff3e547e92c803a8"
+  },
+  "ParamsApplied": {
+    "version": 1,
+    "shape": "e5a30bea881f55fd"
+  },
+  "ParamsCancelled": {
+    "version": 1,
+    "shape": "e5a30bea881f55fd"
+  },
+  "ParamsChanged": {
+    "version": 1,
+    "shape": "606f3cc0f957416d"
+  },
+  "PauseFlagsChanged": {
+    "version": 1,
+    "shape": "c301f322b0be142c"
+  },
+  "PayoutClaimed": {
+    "version": 1,
+    "shape": "b0bdbb2977c3227b"
+  },
+  "RandomnessRequested": {
+    "version": 1,
+    "shape": "8732e080edbb2fee"
+  },
+  "ShareAccountChanged": {
+    "version": 1,
+    "shape": "0edce3525edf0c51"
+  },
+  "ShareMetadataSet": {
+    "version": 1,
+    "shape": "ba0dd0488e896a4d"
+  },
+  "TicketExpired": {
+    "version": 1,
+    "shape": "9c5c5ea42b5bb0ba"
+  },
+  "TicketOpened": {
+    "version": 1,
+    "shape": "76dcb8398d1f8713"
+  },
+  "TicketSettled": {
+    "version": 1,
+    "shape": "d0f3da3f6f96df7c"
+  },
+  "WithdrawClaimed": {
+    "version": 1,
+    "shape": "1c2645270e119683"
+  },
+  "WithdrawRequested": {
+    "version": 1,
+    "shape": "f87dbb146666fd30"
+  },
+  "BondChanged": {
+    "version": 1,
+    "shape": "bc0fd6ea221b70e9",
+    "retired": true
+  },
+  "IntegratorRegistered": {
+    "version": 1,
+    "shape": "dc434456c8642d7e",
+    "retired": true
+  }
+}

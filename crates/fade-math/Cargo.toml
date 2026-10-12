@@ -1,0 +1,21 @@
+# Pure integer arithmetic of the protocol: payout table validation, EV check,
+# outcome selection, caps, share accounting, on-chain layouts. No Solana
+# dependency, no allocation, no floating point — so it can be property-tested
+# on the host, fuzzed, and cross-checked against the Python reference.
+[package]
+name = "fade-math"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1.11"
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "=0.10.9"

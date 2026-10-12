@@ -1,0 +1,9 @@
+Fade
+Copyright 2026 the Fade authors
+
+This product includes software developed by third parties:
+
+- ORAO VRF interface definition (tests/fixtures/orao/orao_vrf.json), from
+  https://github.com/orao-network/solana-vrf, licensed under the Apache License,
+  Version 2.0. The file is used only to check Fade's hand-written client against
+  the published interface; no ORAO code is compiled into Fade.

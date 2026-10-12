@@ -1,0 +1,10 @@
+{
+  "name": "Fade Vault USDC",
+  "symbol": "fvUSDC",
+  "description": "Shares of the Fade vault on Solana devnet",
+  "image": "https://fade.finance/tokens/fvusdc.png",
+  "properties": {
+    "files": [{ "uri": "https://fade.finance/tokens/fvusdc.png", "type": "image/png" }],
+    "category": "image"
+  }
+}

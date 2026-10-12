@@ -1,0 +1,25 @@
+# Test double: an integrator program that CPIs into Fade, plus adversarial
+# variants (wrong bump, no PDA signature). Deployed only in test harnesses.
+[package]
+name = "test-integrator"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "test_integrator"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "fade/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+anchor-spl = { workspace = true }
+fade = { path = "../../../programs/fade", features = ["cpi"] }

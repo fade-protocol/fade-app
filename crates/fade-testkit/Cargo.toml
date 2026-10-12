@@ -1,0 +1,17 @@
+# Shared test harness: the mainnet feature set and rent for Mollusk and LiteSVM,
+# so no test ever runs against a feature set the cluster does not have.
+[package]
+name = "fade-testkit"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+mollusk-svm = { workspace = true }
+litesvm = { workspace = true }
+agave-feature-set = { workspace = true }
+solana-address = { workspace = true }
+solana-account = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

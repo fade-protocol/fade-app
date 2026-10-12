@@ -1,0 +1,5 @@
+# Host toolchain (tests, clippy, fmt). SBF builds use platform-tools' own rustc.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

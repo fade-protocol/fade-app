@@ -1,0 +1,31 @@
+# build output: every .so and every generated program keypair
+/target/
+**/target/
+.anchor/
+test-ledger/
+
+# secrets — no keypair is ever committed
+keys/
+**/*keypair*.json
+.env
+.env.*
+!.env.example
+
+# node
+node_modules/
+dist/
+coverage/
+
+# fuzzing artefacts (seed corpora are committed, grown corpora are not)
+**/fuzz/artifacts/
+**/fuzz/coverage/
+
+*.log
+.DS_Store
+
+# devnet run logs written by scripts/devnet/e2e.ts
+scripts/devnet/runs/
+
+# wrangler local state
+.wrangler/
+__pycache__/

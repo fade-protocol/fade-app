@@ -1,0 +1,5 @@
+# Vite names every file under /assets/ by its content hash: a new build gets new
+# names, so these can be cached for good. index.html keeps the default
+# (revalidated on every load) so a deploy is picked up at once.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

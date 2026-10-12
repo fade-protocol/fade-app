@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fade: the permissionless payout protocol on Solana</title>
+    <meta
+      name="description"
+      content="Fade is a permissionless payout protocol on Solana. Add about 1% at checkout and sometimes the order is free: the odds are on-chain, a shared USDC vault pays, and the merchant is paid in full."
+    />
+    <meta name="theme-color" content="#0b0a10" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="canonical" href="https://fade.finance/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://fade.finance/" />
+    <meta property="og:title" content="Payments are programmable. Payouts should be too." />
+    <meta
+      property="og:description"
+      content="The permissionless payout protocol on Solana: fixed odds on-chain, a shared USDC vault behind every payout."
+    />
+    <meta property="og:image" content="https://fade.finance/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@fade_labs" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap"
+    />
+    <link rel="preload" as="image" href="/img/hero-printer.jpg" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/landing.js" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="site-header wrap">
+      <a class="brand" href="/" aria-label="Fade, home">
+        <svg
+          class="brand-mark"
+          viewBox="0 0 32 32"
+          width="32"
+          height="32"
+          shape-rendering="crispEdges"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <rect x="0.5" y="0.5" width="31" height="31" rx="6" fill="#0c0a12" stroke="#2a2540" />
+          <g fill="#7c5cff">
+            <rect x="4" y="10" width="6" height="20" />
+            <rect x="10" y="18" width="6" height="4" />
+          </g>
+          <g fill="#f0eee8">
+            <rect x="6" y="8" width="6" height="20" />
+            <rect x="6" y="8" width="14" height="6" />
+            <rect x="12" y="16" width="6" height="4" />
+            <rect x="20" y="8" width="2" height="2" />
+            <rect x="22" y="10" width="2" height="2" />
+            <rect x="24" y="8" width="2" height="2" />
+            <rect x="22" y="6" width="2" height="2" />
+            <rect x="26" y="4" width="2" height="2" />
+            <rect x="24" y="12" width="2" height="2" />
+            <rect x="22" y="14" width="2" height="2" />
+            <rect x="20" y="16" width="2" height="2" />
+          </g>
+          <g fill="#7c5cff">
+            <rect x="20" y="12" width="2" height="2" />
+            <rect x="26" y="10" width="2" height="2" />
+            <rect x="24" y="16" width="2" height="2" />
+          </g>
+        </svg>
+        FADE
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="#merchants">Merchants</a>
+        <a href="#vault">Liquidity</a>
+        <a href="https://docs.fade.finance">Docs</a>
+        <a class="btn btn-light btn-nav" href="https://app.fade.finance">Try it</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="wrap">
+          <div class="hero-copy">
+            <p class="eyebrow">Permissionless payout protocol on Solana</p>
+            <h1 id="hero-title">Your order<br />is <span class="t-green">free.</span></h1>
+            <p class="hero-lede">
+              Add about 1% at checkout. Sometimes the receipt ends on 0.00. The odds are on-chain,
+              the bank is shared, and the merchant is paid in full.
+            </p>
+            <div class="cta-row">
+              <a class="btn btn-violet btn-lg" href="https://app.fade.finance">Try the checkout</a>
+              <a class="btn btn-outline btn-lg" href="#how">How it works</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="marquee" aria-label="Example offers">
+        <div class="marquee-track">
+          <ul class="marquee-group">
+            <li>1 order in 100, free</li>
+            <li class="mark" aria-hidden="true">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+            <li>Half price, 1 in 50</li>
+            <li class="mark" aria-hidden="true">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+            <li>Your swap, won back</li>
+            <li class="mark" aria-hidden="true">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+            <li>10x cashback</li>
+            <li class="mark" aria-hidden="true">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+          </ul>
+          <ul class="marquee-group" aria-hidden="true">
+            <li>1 order in 100, free</li>
+            <li class="mark">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+            <li>Half price, 1 in 50</li>
+            <li class="mark">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+            <li>Your swap, won back</li>
+            <li class="mark">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+            <li>10x cashback</li>
+            <li class="mark">
+              <svg
+                viewBox="0 0 3 3"
+                width="10"
+                height="10"
+                shape-rendering="crispEdges"
+                focusable="false"
+              >
+                <path d="M0 0h3v3H0z" />
+              </svg>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <section id="how" class="steps-section wrap" aria-labelledby="steps-title">
+        <h2 id="steps-title" class="h-xl">Three seconds,<br />three steps.</h2>
+        <ol class="steps">
+          <li class="step">
+            <p class="step-num">01</p>
+            <h3>Tick the box</h3>
+            <p>The ticket rides with the payment. One signature, no account.</p>
+          </li>
+          <li class="step">
+            <p class="step-num">02</p>
+            <h3>The draw</h3>
+            <p>A verifiable oracle, on a block that did not exist when you paid.</p>
+          </li>
+          <li class="step step-green">
+            <p class="step-num">03</p>
+            <h3>Paid in full</h3>
+            <p>The winner gets the order back. The shared bank pays, not the shop.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="merchants" class="band band-violet" aria-labelledby="merchants-title">
+        <div class="wrap band-row">
+          <div class="band-copy">
+            <p class="eyebrow eyebrow-dark">For merchants and apps</p>
+            <h2 id="merchants-title" class="h-lg">Every order can come back free.</h2>
+            <div class="points">
+              <p><b>Paid in full, every time.</b> The vault pays the winner, never the shop.</p>
+              <p>
+                <b>Your share, 0 to 5%.</b> Zero for a promotion, a few percent to earn on every
+                ticket.
+              </p>
+              <p>
+                <b>Your offer.</b> The order free, half price or 10% off: pick the odds, Fade checks
+                the math.
+              </p>
+              <p><b>One call.</b> No capital, no deposit, no registration.</p>
+            </div>
+            <div class="cta-row">
+              <a class="btn btn-dark" href="https://docs.fade.finance/use-cases/checkout-win-back"
+                >Merchant guide</a
+              >
+            </div>
+          </div>
+
+          <div class="panel sim" data-sim>
+            <fieldset class="field">
+              <legend class="label">Order</legend>
+              <div class="pills">
+                <button type="button" class="pill" data-order="50" aria-pressed="false">
+                  50 USDC
+                </button>
+                <button type="button" class="pill" data-order="100" aria-pressed="true">
+                  100 USDC
+                </button>
+                <button type="button" class="pill" data-order="250" aria-pressed="false">
+                  250 USDC
+                </button>
+              </div>
+            </fieldset>
+            <fieldset class="field">
+              <legend class="label">Payout</legend>
+              <div class="offers">
+                <button type="button" class="offer" data-offer="free" aria-pressed="true">
+                  <span class="offer-odds">1 in 100</span
+                  ><span class="offer-label">order free</span>
+                </button>
+                <button type="button" class="offer" data-offer="half" aria-pressed="false">
+                  <span class="offer-odds">1 in 50</span><span class="offer-label">half price</span>
+                </button>
+                <button type="button" class="offer" data-offer="tenth" aria-pressed="false">
+                  <span class="offer-odds">1 in 10</span><span class="offer-label">10% off</span>
+                </button>
+              </div>
+            </fieldset>
+            <div class="quote" aria-live="polite">
+              <div>
+                <p class="quote-label">Ticket</p>
+                <p class="quote-value">
+                  <span data-ticket>1.04</span> <span class="quote-unit">USDC</span>
+                </p>
+              </div>
+              <div class="quote-right">
+                <p class="quote-label">If you win</p>
+                <p class="quote-value t-green">+<span data-prize>101.04</span></p>
+              </div>
+            </div>
+            <button type="button" class="btn-draw" disabled>Draw</button>
+            <p class="note">
+              Example with the merchant's share at 2%. Try it for real at
+              <a href="https://app.fade.finance">app.fade.finance</a>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="vault" class="band band-green" aria-labelledby="vault-title">
+        <div class="wrap band-row">
+          <div class="band-copy">
+            <p class="eyebrow eyebrow-dark">For liquidity providers</p>
+            <h2 id="vault-title" class="h-lg">Every ticket pays the bank.</h2>
+            <p class="band-lede">
+              At least 1% of every ticket, from every app at once. Move the volume and see the
+              arithmetic.
+            </p>
+          </div>
+
+          <div class="panel calc" data-calc>
+            <fieldset class="field">
+              <legend class="label">Monthly volume, for a 1M USDC bank</legend>
+              <div class="pills">
+                <button type="button" class="pill" data-volume="0.5" aria-pressed="false">
+                  0.5M
+                </button>
+                <button type="button" class="pill" data-volume="1" aria-pressed="false">1M</button>
+                <button type="button" class="pill" data-volume="2" aria-pressed="true">2M</button>
+                <button type="button" class="pill" data-volume="3" aria-pressed="false">3M</button>
+                <button type="button" class="pill" data-volume="5" aria-pressed="false">5M</button>
+              </div>
+            </fieldset>
+            <p class="apr t-green" aria-live="polite">
+              <span data-apr>24</span>%<span class="apr-unit">APR</span>
+            </p>
+            <p class="note note-lg">
+              On average at the 1% floor. Worked example, not a forecast: returns follow volume and
+              the luck of the draws.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="builders wrap" aria-labelledby="builders-title">
+        <div class="builders-copy">
+          <p class="eyebrow">For builders</p>
+          <h2 id="builders-title" class="h-md">One call opens a payout.</h2>
+          <p class="muted-lede">
+            A program, a server or a wallet. Up to 32 outcomes, checked on-chain before any money
+            moves.
+          </p>
+          <a class="btn btn-light btn-md" href="https://docs.fade.finance/build/quickstart"
+            >Quickstart</a
+          >
+        </div>
+        <pre
+          class="code"
+          aria-label="Integration example in TypeScript"
+        ><code><span class="c-kw">const</span> ticket = <span class="c-kw">await</span> <span class="c-fn">getOpenTicketInstructionAsync</span>({
+  ...accounts,
+  price: <span class="c-num">1_000_000n</span>, <span class="c-com">// 1 USDC</span>
+  payoutTable: [
+    { p: <span class="c-num">96_500_000n</span>, m: <span class="c-num">100_000n</span> }, <span class="c-com">// 10x, 9.65%</span>
+    { p: <span class="c-num">903_500_000n</span>, m: <span class="c-num">0n</span> },
+  ],
+  appShareBps: <span class="c-num">0n</span>,
+  nonce, <span class="c-com">// the app's next ticket number</span>
+});
+
+<span class="c-com">// One signature: the payment and its ticket.</span>
+<span class="c-kw">await</span> <span class="c-fn">send</span>(user, [payment, ticket]);</code></pre>
+      </section>
+
+      <section class="closing wrap" aria-labelledby="closing-title">
+        <h2 id="closing-title" class="h-closing">
+          Payments are programmable.<br /><span class="t-violet">Payouts should be too.</span>
+        </h2>
+        <a class="btn btn-light btn-xl" href="https://app.fade.finance">Try Fade now</a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <div class="footer-top">
+          <div class="footer-brand">
+            <a class="footer-logo" href="/" aria-label="Fade, home">
+              <svg
+                class="footer-mark"
+                viewBox="0 0 32 32"
+                width="40"
+                height="40"
+                shape-rendering="crispEdges"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <rect
+                  x="0.5"
+                  y="0.5"
+                  width="31"
+                  height="31"
+                  rx="6"
+                  fill="#0c0a12"
+                  stroke="#2a2540"
+                />
+                <g fill="#7c5cff">
+                  <rect x="4" y="10" width="6" height="20" />
+                  <rect x="10" y="18" width="6" height="4" />
+                </g>
+                <g fill="#f0eee8">
+                  <rect x="6" y="8" width="6" height="20" />
+                  <rect x="6" y="8" width="14" height="6" />
+                  <rect x="12" y="16" width="6" height="4" />
+                  <rect x="20" y="8" width="2" height="2" />
+                  <rect x="22" y="10" width="2" height="2" />
+                  <rect x="24" y="8" width="2" height="2" />
+                  <rect x="22" y="6" width="2" height="2" />
+                  <rect x="26" y="4" width="2" height="2" />
+                  <rect x="24" y="12" width="2" height="2" />
+                  <rect x="22" y="14" width="2" height="2" />
+                  <rect x="20" y="16" width="2" height="2" />
+                </g>
+                <g fill="#7c5cff">
+                  <rect x="20" y="12" width="2" height="2" />
+                  <rect x="26" y="10" width="2" height="2" />
+                  <rect x="24" y="16" width="2" height="2" />
+                </g>
+              </svg>
+              <span class="footer-name">Fade</span>
+            </a>
+            <p class="footer-tagline">Payments are programmable. Payouts should be too.</p>
+            <ul class="footer-icons" aria-label="Fade elsewhere">
+              <li>
+                <a class="icon-btn" href="https://x.com/fade_labs" aria-label="Fade on X">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="18"
+                    height="18"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path
+                      fill="currentColor"
+                      d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"
+                    />
+                  </svg>
+                </a>
+              </li>
+              <li>
+                <a
+                  class="icon-btn"
+                  href="https://docs.fade.finance"
+                  aria-label="Fade documentation"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v18H7.5A2.5 2.5 0 0 1 5 18.5v-13Z" />
+                    <path d="M5 18.5A2.5 2.5 0 0 1 7.5 16H19" />
+                    <path d="M9 7.5h6M9 11h4" />
+                  </svg>
+                </a>
+              </li>
+              <li>
+                <a class="icon-btn" href="https://app.fade.finance" aria-label="Open the Fade app">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+                    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+                    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+                    <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+                  </svg>
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <nav class="footer-nav" aria-label="Footer">
+            <div class="footer-col">
+              <h2 class="footer-heading">Product</h2>
+              <ul>
+                <li><a href="https://app.fade.finance">Open the app</a></li>
+                <li><a href="https://app.fade.finance/vault">Vault</a></li>
+              </ul>
+            </div>
+            <div class="footer-col">
+              <h2 class="footer-heading">Developers</h2>
+              <ul>
+                <li><a href="https://docs.fade.finance">Docs</a></li>
+                <li><a href="https://docs.fade.finance/build/quickstart">Quickstart</a></li>
+                <li><a href="https://fade.finance/idl/fade.json">IDL</a></li>
+              </ul>
+            </div>
+            <div class="footer-col">
+              <h2 class="footer-heading">Community</h2>
+              <ul>
+                <li><a href="https://x.com/fade_labs">X</a></li>
+              </ul>
+            </div>
+          </nav>
+        </div>
+
+        <div class="footer-bottom">
+          <p>&copy; 2026 Fade</p>
+          <p class="legal">
+            Prize-linked payouts are subject to local gaming and promotion law. Each app offering
+            them is responsible for doing so where they are permitted.
+          </p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

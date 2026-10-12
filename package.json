@@ -1,0 +1,62 @@
+{
+  "name": "fade",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fade — permissionless payout protocol for Solana",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fade-protocol/fade-app.git"
+  },
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "tools:install": "bash scripts/toolchain/install.sh",
+    "tools:doctor": "bash scripts/toolchain/doctor.sh",
+    "with": "bash scripts/toolchain/with-toolchain.sh",
+    "build:sbf": "bash scripts/toolchain/with-toolchain.sh bash scripts/build-sbf.sh",
+    "codama:generate": "node scripts/codama-generate.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test:ts": "bash scripts/toolchain/with-toolchain.sh vitest run",
+    "test:rust": "bash scripts/toolchain/with-toolchain.sh cargo test --workspace",
+    "lint": "prettier --check . && bash scripts/toolchain/with-toolchain.sh cargo fmt --all --check",
+    "lint:fix": "prettier --write . && bash scripts/toolchain/with-toolchain.sh cargo fmt --all",
+    "clippy": "bash scripts/toolchain/with-toolchain.sh cargo clippy --workspace --all-targets -- -D warnings",
+    "prepare": "husky",
+    "verify": "bash scripts/toolchain/with-toolchain.sh bash scripts/verify.sh",
+    "features:sync": "bash scripts/toolchain/with-toolchain.sh cargo test -p fade-testkit --test dump_feature_ids -- --ignored && python3 scripts/sync-features.py",
+    "devnet:smoke": "bash scripts/toolchain/with-toolchain.sh pnpm exec tsx scripts/devnet/smoke.ts",
+    "devnet:init": "bash scripts/toolchain/with-toolchain.sh pnpm exec tsx scripts/devnet/init.ts",
+    "devnet:e2e": "bash scripts/toolchain/with-toolchain.sh pnpm exec tsx scripts/devnet/e2e.ts",
+    "devnet:params": "bash scripts/toolchain/with-toolchain.sh pnpm exec tsx scripts/devnet/params.ts",
+    "devnet:deposit": "bash scripts/toolchain/with-toolchain.sh pnpm exec tsx scripts/devnet/deposit.ts",
+    "devnet:share-metadata": "bash scripts/toolchain/with-toolchain.sh pnpm exec tsx scripts/devnet/share-metadata.ts",
+    "events:check": "node scripts/check-event-schemas.mjs",
+    "events:lock": "node scripts/check-event-schemas.mjs --write",
+    "build:sbf:devnet": "bash scripts/toolchain/with-toolchain.sh bash scripts/build-sbf-devnet.sh"
+  },
+  "devDependencies": {
+    "@codama/nodes-from-anchor": "1.5.6",
+    "@codama/renderers-js": "2.5.0",
+    "@solana-program/system": "0.14.1",
+    "@solana-program/token": "0.16.1",
+    "@solana/kit": "8.3.0",
+    "@solana/program-client-core": "8.3.0",
+    "@types/node": "24.13.5",
+    "codama": "1.11.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.5.1",
+    "litesvm": "1.4.1",
+    "prettier": "3.9.7",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  },
+  "lint-staged": {
+    "*.{ts,mts,mjs,js,json,yaml,yml,md}": "prettier --write",
+    "*.rs": "bash scripts/toolchain/with-toolchain.sh rustfmt --edition 2021"
+  }
+}

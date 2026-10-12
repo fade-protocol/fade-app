@@ -1,0 +1,25 @@
+packages:
+  - "."
+  - "apps/*"
+
+# Install scripts stay off. Reown's are a version-check notice and optional
+# native speedups for Node (bigint-buffer, bufferutil, utf-8-validate) that the
+# browser bundle never uses; each falls back to pure JS.
+allowBuilds:
+  "@reown/appkit": false
+  bigint-buffer: false
+  bufferutil: false
+  esbuild: false
+  utf-8-validate: false
+# Supply-chain cooldown: a package must be at least 3 days old to be installed.
+minimumReleaseAge: 4320
+# Exact pins younger than the cooldown on 17 September 2026 (all published
+# 15–16 September). Remove each entry once its package is older than 3 days;
+# scripts/check-cooldown-invariant.mjs (Phase 2) will flag stale entries.
+minimumReleaseAgeExclude:
+  - codama
+  - "@codama/*"
+  - vitest
+  - "@vitest/*"
+  - "@types/node"
+  - prettier

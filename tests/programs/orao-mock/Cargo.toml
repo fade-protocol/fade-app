@@ -1,0 +1,26 @@
+# Test double of the ORAO VRF program, loaded at ORAO's address in LiteSVM.
+# `request_v2` has ORAO's discriminator, account order and fee handling;
+# `fulfill` stands in for the authorities' quorum and lets a test choose the
+# randomness. Deployed only in test harnesses.
+[package]
+name = "orao-mock"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "orao_mock"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+fade-math = { path = "../../../crates/fade-math" }

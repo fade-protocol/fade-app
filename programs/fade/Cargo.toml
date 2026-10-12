@@ -1,0 +1,46 @@
+[package]
+name = "fade"
+version = "0.1.0"
+description = "Fade — a permissionless payout protocol for Solana"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "fade"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# Swap the pinned USDC mint for a Fade-controlled test mint. Never on mainnet.
+devnet = []
+# Governance changes apply at once, without the timelock: development only.
+# Requires "devnet", so a mainnet build can never carry it.
+no-timelock = ["devnet"]
+
+[dependencies]
+anchor-lang = { workspace = true, features = ["init-if-needed"] }
+anchor-spl = { workspace = true }
+fade-math = { path = "../../crates/fade-math" }
+solana-sha256-hasher = { workspace = true }
+solana-instructions-sysvar = { workspace = true }
+
+[dev-dependencies]
+fade-testkit = { path = "../../crates/fade-testkit" }
+test-integrator = { path = "../../tests/programs/test-integrator", features = ["no-entrypoint"] }
+orao-mock = { path = "../../tests/programs/orao-mock", features = ["no-entrypoint"] }
+litesvm = { workspace = true }
+solana-address = { workspace = true }
+solana-account = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+solana-message = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-clock = "3"

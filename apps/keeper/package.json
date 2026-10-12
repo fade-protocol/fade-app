@@ -1,0 +1,27 @@
+{
+  "name": "@fade/keeper",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fade keeper: cranks tickets and epochs on devnet, behind api.fade.finance",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "npx -y wrangler@4.147.0 deploy --dry-run --outdir dist",
+    "typecheck": "tsc -p tsconfig.json && tsc -p scripts/tsconfig.json",
+    "dev": "npx -y wrangler@4.147.0 dev",
+    "deploy": "npx -y wrangler@4.147.0 deploy",
+    "e2e": "cd ../.. && tsx apps/keeper/scripts/e2e.ts"
+  },
+  "dependencies": {
+    "@solana-program/system": "0.14.1",
+    "@solana-program/token": "0.16.1",
+    "@solana/kit": "8.3.0",
+    "@solana/program-client-core": "8.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261001.1",
+    "@types/node": "24.13.5",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2"
+  }
+}

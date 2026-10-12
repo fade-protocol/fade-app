@@ -1,0 +1,285 @@
+{
+ "note": "expected results from scripts/oracle/fade_ref.py with Params::SPEC, app share 50 bps, cap on the vault margin (payout table margin - 50 - 20 bps); the integrator ceiling is 20 % of assets and never binds in this matrix",
+ "app_share_bps": 50,
+ "tables": {
+  "slot_classic": {
+   "outcomes": [
+    {
+     "p": 100000000,
+     "m": 35000
+    },
+    {
+     "p": 150000000,
+     "m": 20000
+    },
+    {
+     "p": 200000000,
+     "m": 12000
+    },
+    {
+     "p": 75000000,
+     "m": 10000
+    },
+    {
+     "p": 475000000,
+     "m": 0
+    }
+   ],
+   "lhs": "9650000000000",
+   "margin_bps": 350,
+   "split": "ok",
+   "vault_margin_bps": 280,
+   "split_reason": null,
+   "matrix": [
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 25,
+     "result": "ok",
+     "reason": null,
+     "liability": 62675000
+    },
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 50,
+     "result": "err",
+     "reason": "PerTicketCap",
+     "liability": null
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 25,
+     "result": "ok",
+     "reason": null,
+     "liability": 62675000
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 50,
+     "result": "ok",
+     "reason": null,
+     "liability": 125350000
+    }
+   ]
+  },
+  "loot_box": {
+   "outcomes": [
+    {
+     "p": 20000000,
+     "m": 32000
+    },
+    {
+     "p": 80000000,
+     "m": 20000
+    },
+    {
+     "p": 200000000,
+     "m": 12000
+    },
+    {
+     "p": 300000000,
+     "m": 10000
+    },
+    {
+     "p": 400000000,
+     "m": 5000
+    }
+   ],
+   "lhs": "9640000000000",
+   "margin_bps": 360,
+   "split": "ok",
+   "vault_margin_bps": 290,
+   "split_reason": null,
+   "matrix": [
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 25,
+     "result": "ok",
+     "reason": null,
+     "liability": 55175000
+    },
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 50,
+     "result": "err",
+     "reason": "PerTicketCap",
+     "liability": null
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 25,
+     "result": "ok",
+     "reason": null,
+     "liability": 55175000
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 50,
+     "result": "ok",
+     "reason": null,
+     "liability": 110350000
+    }
+   ]
+  },
+  "rewards_ticket": {
+   "outcomes": [
+    {
+     "p": 100000000,
+     "m": 35000
+    },
+    {
+     "p": 200000000,
+     "m": 15000
+    },
+    {
+     "p": 310000000,
+     "m": 10000
+    },
+    {
+     "p": 390000000,
+     "m": 0
+    }
+   ],
+   "lhs": "9600000000000",
+   "margin_bps": 400,
+   "split": "ok",
+   "vault_margin_bps": 330,
+   "split_reason": null,
+   "matrix": [
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 25,
+     "result": "ok",
+     "reason": null,
+     "liability": 62675000
+    },
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 50,
+     "result": "err",
+     "reason": "PerTicketCap",
+     "liability": null
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 25,
+     "result": "ok",
+     "reason": null,
+     "liability": 62675000
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 50,
+     "result": "ok",
+     "reason": null,
+     "liability": 125350000
+    }
+   ]
+  },
+  "loot_box_mythic_5x": {
+   "outcomes": [
+    {
+     "p": 20000000,
+     "m": 50000
+    },
+    {
+     "p": 80000000,
+     "m": 20000
+    },
+    {
+     "p": 200000000,
+     "m": 12000
+    },
+    {
+     "p": 300000000,
+     "m": 10000
+    },
+    {
+     "p": 400000000,
+     "m": 5000
+    }
+   ],
+   "lhs": "10000000000000",
+   "margin_bps": 0,
+   "split": "err",
+   "vault_margin_bps": null,
+   "split_reason": "MarginFloor",
+   "matrix": [
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 25,
+     "result": "err",
+     "reason": "MarginFloor",
+     "liability": null
+    },
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 50,
+     "result": "err",
+     "reason": "MarginFloor",
+     "liability": null
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 25,
+     "result": "err",
+     "reason": "MarginFloor",
+     "liability": null
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 50,
+     "result": "err",
+     "reason": "MarginFloor",
+     "liability": null
+    }
+   ]
+  },
+  "moonshot_10x": {
+   "outcomes": [
+    {
+     "p": 96500000,
+     "m": 100000
+    },
+    {
+     "p": 903500000,
+     "m": 0
+    }
+   ],
+   "lhs": "9650000000000",
+   "margin_bps": 350,
+   "split": "ok",
+   "vault_margin_bps": 280,
+   "split_reason": null,
+   "matrix": [
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 25,
+     "result": "err",
+     "reason": "PerTicketCap",
+     "liability": null
+    },
+    {
+     "vault_usdc": 5000,
+     "price_usdc": 50,
+     "result": "err",
+     "reason": "PerTicketCap",
+     "liability": null
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 25,
+     "result": "ok",
+     "reason": null,
+     "liability": 225175000
+    },
+    {
+     "vault_usdc": 25000,
+     "price_usdc": 50,
+     "result": "err",
+     "reason": "PerTicketCap",
+     "liability": null
+    }
+   ]
+  }
+ }
+}
