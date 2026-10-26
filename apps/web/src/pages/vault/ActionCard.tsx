@@ -26,7 +26,8 @@ import {
 } from "../../lib/actionQuote";
 import { clock, fv, sol, usdc } from "../../lib/format";
 import { requestDepositInstruction, requestWithdrawInstruction } from "../../lib/lp";
-import { settleEta, valueOf, type PendingRequest } from "../../lib/position";
+import { settleEta, type PendingRequest } from "../../lib/position";
+import { valueOf } from "../../lib/providers";
 import { availableNow } from "../../lib/vaultFigures";
 import type { Signature } from "@solana/kit";
 import { send, signatureStatus, TxError, type ProgramFailure } from "../../lib/tx";
@@ -96,7 +97,7 @@ export function ActionCard({
   data: VaultData;
   side: Side;
   onSide: (s: Side) => void;
-  /** The vault's estimated APR in percent, when there is enough data for one. */
+  /** The vault's APR in percent, when there is enough data for one. */
   aprPct: number | null;
 }) {
   const { state, wallet, signer, pending, fund } = data;
@@ -482,9 +483,9 @@ export function ActionCard({
                   <dt className="label-tip">
                     Projected per year
                     <InfoTip label="About this projection" docs>
-                      Your deposit at the vault's estimated APR: the vault margin earned on the last
-                      24 h of tickets, annualised. Not a forecast: results move with volume and the
-                      luck of the draws.
+                      Your deposit at the vault's APR: the vault margin earned on the tickets of the
+                      last 7 days, annualised. Past activity, not a forecast: results move with
+                      volume and the luck of the draws.
                     </InfoTip>
                   </dt>
                   <dd className="mono up">

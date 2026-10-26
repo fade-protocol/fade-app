@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { EpochRecord, Vault, WithdrawRequest } from "../../../apps/web/src/lib/fade.ts";
 import { livePrice, sharePrice, strikeSeries } from "../../../apps/web/src/lib/history.ts";
 import { withdrawClaimRecords } from "../../../apps/web/src/lib/lp.ts";
-import { queuedOf, sharesFor, sharesWorth, valueOf } from "../../../apps/web/src/lib/position.ts";
+import { queuedOf, sharesFor, sharesWorth, valueOf } from "../../../apps/web/src/lib/providers.ts";
 import {
   CHAIN_R_MIN,
   INDEX_SCALE,

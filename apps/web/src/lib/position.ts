@@ -3,128 +3,20 @@
 // PnL is a net-flow sum over the history this page could read, and says so
 // when that history does not explain the wallet's shares.
 import type { Address } from "@solana/kit";
-import type {
-  DepositRequest,
-  EpochRecord,
-  Vault,
-  Queue,
-  RiskParams,
-  WithdrawRequest,
-} from "./fade";
+import type { Vault, Queue, RiskParams } from "./fade";
 import { livePrice, type LpItem } from "./history";
 import { withdrawClaimRecords } from "./lp";
+import {
+  queuedOf,
+  shareOfBps,
+  valueOf,
+  type DepositReq,
+  type Rec,
+  type WithdrawReq,
+} from "./providers";
 import { depositDue, stillQueued } from "./shares";
 
 const SHARE_UNIT = 1_000_000_000n;
-
-export type Rec = { address: Address; data: EpochRecord };
-export type DepositReq = { address: Address; data: DepositRequest };
-export type WithdrawReq = { address: Address; data: WithdrawRequest };
-
-/**
- * The program prices shares against its settled assets with virtual offsets (fade-math
- * shares.rs): `A + 1` assets for `S + 1000` shares, so the first deposit mints at 1 USDC per share
- * (6 vs 9 decimals) and no division is ever by zero.
- */
-const VIRTUAL_SHARES = 1_000n;
-const VIRTUAL_ASSETS = 1n;
-const settledAssets = (vault: Vault) => {
-  const a = vault.totalAssets - vault.openVaultCredits;
-  return a > 0n ? a : 0n;
-};
-
-/** Micro-USDC value of `shares` at the vault's live settled price. */
-export function valueOf(shares: bigint, vault: Vault): bigint {
-  return (shares * (settledAssets(vault) + VIRTUAL_ASSETS)) / (vault.totalShares + VIRTUAL_SHARES);
-}
-
-/** Shares `amount` micro-USDC buys at the live price (the strike's may differ). */
-export function sharesFor(amount: bigint, vault: Vault): bigint {
-  return (amount * (vault.totalShares + VIRTUAL_SHARES)) / (settledAssets(vault) + VIRTUAL_ASSETS);
-}
-
-/** The fewest shares worth at least `amount` micro-USDC: a withdrawal typed in USDC leaves no dust. */
-export function sharesWorth(amount: bigint, vault: Vault): bigint {
-  const d = settledAssets(vault) + VIRTUAL_ASSETS;
-  return (amount * (vault.totalShares + VIRTUAL_SHARES) + d - 1n) / d;
-}
-
-/**
- * Shares a withdrawal request still has queued: all of them until its first strike, then what its
- * chain's latest record leaves (`still_queued`).
- */
-export function queuedOf(r: WithdrawRequest, records: readonly Rec[]): bigint {
-  if (r.rEntry === 0n) return r.shares;
-  let latest: Rec | null = null;
-  for (const rec of records)
-    if (rec.data.chainId === r.chainId && (!latest || rec.data.epochId > latest.data.epochId))
-      latest = rec;
-  return latest ? (stillQueued(r.shares, r.rEntry, latest.data.rAfter) ?? r.shares) : r.shares;
-}
-
-/**
- * Everyone with a claim on the vault: share holders, and the owners of every deposit or withdrawal
- * request still open (parked ones included). The header's count and the Providers tab both use it.
- */
-export function providerOwners(
-  holders: readonly { owner: Address }[],
-  deposits: readonly DepositReq[],
-  withdraws: readonly WithdrawReq[],
-): Set<Address> {
-  return new Set([
-    ...holders.map((h) => h.owner),
-    ...deposits.map((d) => d.data.owner),
-    ...withdraws.map((w) => w.data.owner),
-  ]);
-}
-
-export type ProviderRow = {
-  owner: Address;
-  /** fvUSDC in the wallet. */
-  shares: bigint;
-  /** USDC of deposits not priced yet. */
-  depositIn: bigint;
-  /** fvUSDC still queued for withdrawal, in the vault's escrow. */
-  sharesOut: bigint;
-};
-
-/**
- * The Providers table: one row per provider, its fvUSDC, its deposits waiting for a price and its
- * shares queued out (a rationed withdrawal holds only the shares still queued: the rest was burnt
- * and paid; parked requests hold no shares). Largest holding first.
- */
-export function providerRows(
-  holders: readonly { owner: Address; amount: bigint }[],
-  deposits: readonly DepositReq[],
-  withdraws: readonly WithdrawReq[],
-  records: readonly Rec[],
-): ProviderRow[] {
-  const rows = new Map<Address, ProviderRow>();
-  const row = (a: Address) => {
-    let r = rows.get(a);
-    if (!r) {
-      r = { owner: a, shares: 0n, depositIn: 0n, sharesOut: 0n };
-      rows.set(a, r);
-    }
-    return r;
-  };
-  for (const o of providerOwners(holders, deposits, withdraws)) row(o);
-  for (const h of holders) row(h.owner).shares += h.amount;
-  for (const d of deposits) if (!d.data.parked) row(d.data.owner).depositIn += d.data.amount;
-  for (const w of withdraws)
-    if (!w.data.parked) row(w.data.owner).sharesOut += queuedOf(w.data, records);
-  return [...rows.values()].sort((a, b) =>
-    b.shares + b.sharesOut === a.shares + a.sharesOut
-      ? Number(b.depositIn - a.depositIn)
-      : b.shares + b.sharesOut > a.shares + a.sharesOut
-        ? 1
-        : -1,
-  );
-}
-
-/** A holding of `held` shares as a share of `total`, in basis points, rounded down. */
-export const shareOfBps = (held: bigint, total: bigint) =>
-  total === 0n ? 0n : (held * 10_000n) / total;
 
 export type RequestPhase =
   | "queued" // epoch live, before its close

@@ -40,6 +40,7 @@ import {
   type WithdrawRequest,
 } from "../../../../clients/js/src/generated/fade";
 import { ATA_PROGRAM, PROGRAM, PROGRAM_CONFIG, TOKEN_PROGRAM, USDC_MINT } from "./config";
+import { TOKEN_ACCOUNT_SIZE, shareHoldersOf } from "./providers";
 import { rpc } from "./rpc";
 
 export type {
@@ -279,7 +280,10 @@ export async function fetchEpochRecords(): Promise<{ address: Address; data: Epo
   }));
 }
 
-/** Every token account of the share mint with a balance: wallet owner and amount. */
+/**
+ * Every wallet holding fvUSDC and its amount, from a scan of every token account of the share
+ * mint (lib/providers `shareHoldersOf`).
+ */
 export async function fetchShareHolders(): Promise<{ owner: Address; amount: bigint }[]> {
   const p = await pdas();
   const res = await rpc
@@ -287,21 +291,39 @@ export async function fetchShareHolders(): Promise<{ owner: Address; amount: big
       encoding: "base64",
       commitment: "confirmed",
       filters: [
-        { dataSize: 165n },
+        { dataSize: BigInt(TOKEN_ACCOUNT_SIZE) },
         { memcmp: { offset: 0n, bytes: p.shareMint as never, encoding: "base58" } },
       ] as never,
     })
     .send();
-  const out = new Map<Address, bigint>();
-  for (const a of res as unknown as RawAccount[]) {
-    const d = new Uint8Array(getBase64Encoder().encode(a.account.data[0]));
-    const owner = getBase58Decoder().decode(d.subarray(32, 64)) as Address;
-    const amount = new DataView(d.buffer, d.byteOffset).getBigUint64(64, true);
-    // The vault's own share accounts (escrow, claims) are not providers.
-    if (owner === p.vaultAuthority || amount === 0n) continue;
-    out.set(owner, (out.get(owner) ?? 0n) + amount);
-  }
-  return [...out].map(([owner, amount]) => ({ owner, amount }));
+  return shareHoldersOf(
+    (res as unknown as RawAccount[]).map(
+      (a) => new Uint8Array(getBase64Encoder().encode(a.account.data[0])),
+    ),
+    p.vaultAuthority,
+  );
+}
+
+/**
+ * The fvUSDC `owner` holds, every token account of the share mint it owns summed (its associated
+ * account or not), as `fetchShareHolders` and the keeper list it: one entry, none when it holds
+ * nothing.
+ */
+export async function fetchOwnShares(
+  owner: Address,
+): Promise<{ owner: Address; amount: bigint }[]> {
+  const p = await pdas();
+  const { value } = await rpc
+    .getTokenAccountsByOwner(
+      owner,
+      { mint: p.shareMint },
+      { encoding: "base64", commitment: "confirmed" },
+    )
+    .send();
+  return shareHoldersOf(
+    value.map((a) => new Uint8Array(getBase64Encoder().encode(a.account.data[0]))),
+    p.vaultAuthority,
+  ).filter((h) => h.owner === owner);
 }
 
 /** Every integrator the program has seen. */

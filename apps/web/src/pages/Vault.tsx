@@ -1,6 +1,6 @@
 // The vault: its name and token, five figures, then Overview / Performance / Risk / Activity on
 // the left, and Deposit / Withdraw with the owner's position on the right.
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { InfoTip } from "../components/disclosure";
 import { AnimatedHeight, Tween, enterStyle, useDirection } from "../components/motion";
 import { Popover } from "../components/scroll";
@@ -8,10 +8,17 @@ import { ExplorerAddress, NotInitialized, Skeleton } from "../components/ui";
 import { PROGRAM } from "../lib/config";
 import { bps, usdc } from "../lib/format";
 import { livePrice } from "../lib/history";
-import { useProgramTickets, useProtocol } from "../lib/hooks";
+import {
+  useKeeperFeed,
+  useKeeperVault,
+  useProgramTicketsWhen,
+  useProtocol,
+  useVaultApr,
+} from "../lib/hooks";
+import { needsOwn } from "../lib/keeperViews";
+import { needsOwnApr } from "../lib/vaultApr";
 import { AprFigure, useApr } from "./vault/Apr";
-import { providerOwners } from "../lib/position";
-import type { AprEstimate } from "../lib/ticketLog";
+import { APR_LABEL, type AprEstimate } from "../lib/ticketLog";
 import { availableNow, utilisationBps } from "../lib/vaultFigures";
 import { replaceHash, useHash } from "../router";
 import { ActionCard } from "./vault/ActionCard";
@@ -43,10 +50,7 @@ function Metrics({ data, apr }: { data: VaultData; apr: AprEstimate | null }) {
   const price = livePrice(vault);
   const available = availableNow(data.state);
   const util = utilisationBps(vault);
-  const providers =
-    data.holders && data.requests
-      ? providerOwners(data.holders, data.requests.deposits, data.requests.withdraws).size
-      : null;
+  const providers = data.providers?.lines.length ?? null;
   return (
     <dl className="metrics">
       <div className="metric">
@@ -69,7 +73,7 @@ function Metrics({ data, apr }: { data: VaultData; apr: AprEstimate | null }) {
         </dd>
       </div>
       <div className="metric">
-        <dt>Est. APR</dt>
+        <dt>{APR_LABEL}</dt>
         <dd>
           <AprFigure apr={apr} />
         </dd>
@@ -118,9 +122,22 @@ function VaultHeader({ state }: { state: Live | null }) {
 
 function Vault({ state, refreshKey, bump }: { state: Live; refreshKey: number; bump: () => void }) {
   const data = useVaultData(state, refreshKey, bump);
-  const tickets = useProgramTickets();
   const apr = useApr(state);
   const tab = tabOf(useHash());
+  // The vault's public history is the keeper's; the program's recent tickets are read here only
+  // when the keeper cannot serve what the tab shows (lib/keeperViews).
+  const keeper = useKeeperVault();
+  const feed = useKeeperFeed(tab === "activity");
+  const keeperApr = useVaultApr();
+  // the Activity tab's lines behind the feed's, once the visitor asks for them
+  const [olderAsked, setOlderAsked] = useState(false);
+  const askOlder = useCallback(() => setOlderAsked(true), []);
+  const ownTickets =
+    needsOwn(keeper.data, keeper.error !== null) ||
+    (tab === "overview" && keeper.data?.seriesSyncing === true) ||
+    (tab === "overview" && needsOwnApr(keeperApr.data, keeperApr.error !== null)) ||
+    (tab === "activity" && (needsOwn(feed.data, feed.error !== null) || olderAsked));
+  const tickets = useProgramTicketsWhen(ownTickets);
   const setTab = (t: Tab) => replaceHash(t === "overview" ? "" : t);
   const [side, setSide] = useState<"deposit" | "withdraw">(() =>
     new URLSearchParams(window.location.search).get("action") === "withdraw"
@@ -190,8 +207,13 @@ function Vault({ state, refreshKey, bump }: { state: Live; refreshKey: number; b
           >
             {tab === "overview" && (
               <>
-                <VaultChart data={data} tickets={tickets.data} />
-                <WhereVaultEarns state={state} tickets={tickets.data} owner={data.owner} />
+                <VaultChart data={data} keeper={keeper.data} tickets={tickets.data} apr={apr} />
+                <WhereVaultEarns
+                  state={state}
+                  keeper={keeper.data}
+                  tickets={tickets.data}
+                  owner={data.owner}
+                />
               </>
             )}
             {tab === "performance" && <PerClose data={data} />}
@@ -210,7 +232,16 @@ function Vault({ state, refreshKey, bump }: { state: Live; refreshKey: number; b
                 </p>
               </>
             )}
-            {tab === "activity" && <ActivityPanel data={data} tickets={tickets.data} />}
+            {tab === "activity" && (
+              <ActivityPanel
+                data={data}
+                keeper={keeper.data}
+                feed={feed.data}
+                tickets={tickets.data}
+                olderPending={olderAsked && tickets.data === null && tickets.error === null}
+                onOlder={askOlder}
+              />
+            )}
           </section>
         </AnimatedHeight>
       </section>

@@ -1,9 +1,9 @@
 // The deposit / withdraw card's figures: the amount a request carries, what it is estimated to
-// receive, its fees in SOL and the deposit's projection at the vault's estimated APR. Pure, so
+// receive, its fees in SOL and the deposit's projection at the vault's APR. Pure, so
 // each is tested against the program's share arithmetic (tests/ts/web/actionQuote.test.ts).
 import type { RiskParams, Vault } from "./fade";
 import { parseUsdc } from "./format";
-import { sharesFor, sharesWorth, valueOf } from "./position";
+import { sharesFor, sharesWorth, valueOf } from "./providers";
 
 /** Rent-exempt minimum of an account of `size` bytes (Solana's fixed rent schedule). */
 export const rentFor = (size: number) => BigInt((128 + size) * 3480 * 2);

@@ -1,15 +1,29 @@
 // The pure part of the all-time figures (stats.ts): the ticket events of one program
 // transaction, and the running totals they add up to. No storage, no RPC: the Stats Durable
 // Object feeds it one transaction at a time, oldest first, and stores what it returns.
+//
+// Both paths count: a direct ticket opens with `TicketOpened` and closes with `TicketSettled`
+// (drawn) or `TicketExpired`; a beacon ticket opens with `TicketJoined` and closes with
+// `RoundTicketSettled` (drawn) or `RoundTicketReturned` (its round never drew: forfeited or
+// refunded). A return is never a win, whatever it gives back.
+//
+// Every event carries its ticket's integrator but `RoundTicketReturned`, which takes it from
+// the ticket's join.
 import { getBase58Encoder, type Address } from "@solana/kit";
 import {
+  ROUND_TICKET_RETURNED_EVENT_DISCRIMINATOR,
+  ROUND_TICKET_SETTLED_EVENT_DISCRIMINATOR,
   TICKET_EXPIRED_EVENT_DISCRIMINATOR,
+  TICKET_JOINED_EVENT_DISCRIMINATOR,
   TICKET_OPENED_EVENT_DISCRIMINATOR,
   TICKET_SETTLED_EVENT_DISCRIMINATOR,
-  getTicketExpiredEventDecoder,
+  getRoundTicketReturnedEventDecoder,
+  getRoundTicketSettledEventDecoder,
+  getTicketJoinedEventDecoder,
   getTicketOpenedEventDecoder,
   getTicketSettledEventDecoder,
 } from "../../../clients/js/src/generated/fade/index.ts";
+import { decodeTicketExpired } from "../../../clients/js/src/direct/index.ts";
 import { kindOf, type TicketKind } from "../../web/src/lib/ticketKind.ts";
 import { EVENT_IX_TAG, startsWith } from "./chain.ts";
 
@@ -25,20 +39,44 @@ export type JsonTx = {
   blockTime?: number | bigint | null;
 };
 
+/**
+ * One ticket event, of either path (`beacon`: the shared beacon's). An opening is a
+ * `TicketOpened` or a `TicketJoined`; a settlement a `TicketSettled` or a `RoundTicketSettled`
+ * (its payout counted at once, a parked one included); an expiry a `TicketExpired`; a return a
+ * `RoundTicketReturned`, which names no integrator.
+ */
 export type TicketEvent =
-  | { kind: "opened"; ticket: Address; integrator: Address; price: bigint; payoutMax: bigint }
-  | { kind: "settled"; ticket: Address; integrator: Address; payout: bigint }
-  | { kind: "expired"; ticket: Address; integrator: Address };
+  | {
+      kind: "opened";
+      ticket: Address;
+      integrator: Address;
+      price: bigint;
+      payoutMax: bigint;
+      beacon: boolean;
+    }
+  | { kind: "settled"; ticket: Address; integrator: Address; payout: bigint; beacon: boolean }
+  | { kind: "expired"; ticket: Address; integrator: Address }
+  | { kind: "returned"; ticket: Address };
 
-/** The ticket events of a successful transaction, in order, from its `emit_cpi!` inner instructions. */
-export function ticketEventsOf(tx: JsonTx, program: Address): TicketEvent[] {
+/**
+ * The event kinds a version of the index counts: 1 the direct path's, 2 the beacon's too. The
+ * Durable Object records the version its counted transactions were read with, and replays the
+ * beacon's events of the transactions an earlier version counted (stats.ts).
+ */
+export const EVENTS_VERSION = 2;
+
+/**
+ * The event bodies (discriminator first) a successful transaction emitted, in order, from its
+ * `emit_cpi!` inner instructions to `program`.
+ */
+export function eventBodiesOf(tx: JsonTx, program: Address): Uint8Array[] {
   if (!tx.meta || tx.meta.err) return [];
   const keys = [
     ...tx.transaction.message.accountKeys,
     ...(tx.meta.loadedAddresses?.writable ?? []),
     ...(tx.meta.loadedAddresses?.readonly ?? []),
   ];
-  const out: TicketEvent[] = [];
+  const out: Uint8Array[] = [];
   for (const group of tx.meta.innerInstructions ?? []) {
     for (const ix of group.instructions) {
       if (keys[ix.programIdIndex] !== program) continue;
@@ -48,33 +86,64 @@ export function ticketEventsOf(tx: JsonTx, program: Address): TicketEvent[] {
       } catch {
         continue;
       }
-      if (!startsWith(data, EVENT_IX_TAG)) continue;
-      const body = data.subarray(8);
-      try {
-        if (startsWith(body, TICKET_OPENED_EVENT_DISCRIMINATOR)) {
-          const e = getTicketOpenedEventDecoder().decode(body);
-          out.push({
-            kind: "opened",
-            ticket: e.ticket,
-            integrator: e.integrator,
-            price: e.price,
-            payoutMax: e.payoutMax,
-          });
-        } else if (startsWith(body, TICKET_SETTLED_EVENT_DISCRIMINATOR)) {
-          const e = getTicketSettledEventDecoder().decode(body);
-          out.push({
-            kind: "settled",
-            ticket: e.ticket,
-            integrator: e.integrator,
-            payout: e.payout,
-          });
-        } else if (startsWith(body, TICKET_EXPIRED_EVENT_DISCRIMINATOR)) {
-          const e = getTicketExpiredEventDecoder().decode(body);
-          out.push({ kind: "expired", ticket: e.ticket, integrator: e.integrator });
-        }
-      } catch {
-        // not a decodable Fade event
+      if (startsWith(data, EVENT_IX_TAG)) out.push(data.subarray(8));
+    }
+  }
+  return out;
+}
+
+/** The ticket events of a successful transaction, in order, from its `emit_cpi!` inner instructions. */
+export function ticketEventsOf(tx: JsonTx, program: Address): TicketEvent[] {
+  const out: TicketEvent[] = [];
+  for (const body of eventBodiesOf(tx, program)) {
+    try {
+      if (startsWith(body, TICKET_OPENED_EVENT_DISCRIMINATOR)) {
+        const e = getTicketOpenedEventDecoder().decode(body);
+        out.push({
+          kind: "opened",
+          ticket: e.ticket,
+          integrator: e.integrator,
+          price: e.price,
+          payoutMax: e.payoutMax,
+          beacon: false,
+        });
+      } else if (startsWith(body, TICKET_SETTLED_EVENT_DISCRIMINATOR)) {
+        const e = getTicketSettledEventDecoder().decode(body);
+        out.push({
+          kind: "settled",
+          ticket: e.ticket,
+          integrator: e.integrator,
+          payout: e.payout,
+          beacon: false,
+        });
+      } else if (startsWith(body, TICKET_EXPIRED_EVENT_DISCRIMINATOR)) {
+        const e = decodeTicketExpired(body);
+        out.push({ kind: "expired", ticket: e.ticket, integrator: e.integrator });
+      } else if (startsWith(body, TICKET_JOINED_EVENT_DISCRIMINATOR)) {
+        const e = getTicketJoinedEventDecoder().decode(body);
+        out.push({
+          kind: "opened",
+          ticket: e.ticket,
+          integrator: e.integrator,
+          price: e.price,
+          payoutMax: e.payoutMax,
+          beacon: true,
+        });
+      } else if (startsWith(body, ROUND_TICKET_SETTLED_EVENT_DISCRIMINATOR)) {
+        const e = getRoundTicketSettledEventDecoder().decode(body);
+        out.push({
+          kind: "settled",
+          ticket: e.ticket,
+          integrator: e.integrator,
+          payout: e.payout,
+          beacon: true,
+        });
+      } else if (startsWith(body, ROUND_TICKET_RETURNED_EVENT_DISCRIMINATOR)) {
+        const e = getRoundTicketReturnedEventDecoder().decode(body);
+        out.push({ kind: "returned", ticket: e.ticket });
       }
+    } catch {
+      // not a decodable Fade event
     }
   }
   return out;
@@ -83,7 +152,7 @@ export function ticketEventsOf(tx: JsonTx, program: Address): TicketEvent[] {
 export type Win = {
   /** Micro-USDC. */
   payout: bigint;
-  /** Null when the ticket's opening was not read. */
+  /** Null when the opening of a direct ticket was not read (a beacon ticket's is always known). */
   kind: TicketKind | null;
   ticket: Address;
   /** Unix seconds of the settlement; null when the cluster did not date it. */
@@ -95,7 +164,10 @@ export type Split = {
   ticketsOpened: number;
   /** Tickets whose draw ran (settled), win or not. */
   ticketsDrawn: number;
-  /** Tickets closed without a draw. */
+  /**
+   * Tickets closed without a draw: a direct ticket expired, a beacon ticket returned from a
+   * round that never drew (forfeited or refunded).
+   */
   ticketsExpired: number;
   /** Draws that paid something. */
   wins: number;
@@ -119,8 +191,16 @@ export const emptySplit = (): Split => ({
 
 export const emptyTotals = (): Totals => ({ all: emptySplit() });
 
-/** What the indexer remembers of a ticket between its opening and its close. */
-export type OpenTicket = { price: bigint; payoutMax: bigint };
+/**
+ * What the indexer remembers of a ticket between its opening and its close. `integrator` is
+ * null for a ticket remembered before the index kept it (a direct ticket's close names it).
+ */
+export type OpenTicket = {
+  price: bigint;
+  payoutMax: bigint;
+  beacon: boolean;
+  integrator: Address | null;
+};
 
 export type TxContext = {
   signature: string;
@@ -130,15 +210,23 @@ export type TxContext = {
   openOf: (ticket: Address) => OpenTicket | null;
 };
 
+/**
+ * A demo ticket under any integrator, as in the app: a beacon ticket is a small ticket, and a
+ * direct all-or-nothing one reads as a swap.
+ */
+const winKind = (open: { price: bigint; payoutMax: bigint; beacon: boolean }): TicketKind =>
+  kindOf(open, true);
+
 function addTo(s: Split, e: TicketEvent, ctx: TxContext, open: OpenTicket | null): Split {
   if (e.kind === "opened") return { ...s, ticketsOpened: s.ticketsOpened + 1 };
-  if (e.kind === "expired") return { ...s, ticketsExpired: s.ticketsExpired + 1 };
+  if (e.kind === "expired" || e.kind === "returned")
+    return { ...s, ticketsExpired: s.ticketsExpired + 1 };
   const next = { ...s, ticketsDrawn: s.ticketsDrawn + 1 };
   if (e.payout <= 0n) return next;
   const win: Win = {
     payout: e.payout,
-    // a demo ticket under any integrator: all-or-nothing tickets read as a swap, as in the app
-    kind: open ? kindOf(open, true) : null,
+    // a beacon ticket is a small ticket whatever its opening (kindOf)
+    kind: e.beacon ? "Small ticket" : open ? winKind(open) : null,
     ticket: e.ticket,
     at: ctx.at,
     signature: ctx.signature,
@@ -167,7 +255,12 @@ export function applyTx(totals: Totals, events: readonly TicketEvent[], ctx: TxC
     const open = e.kind === "opened" ? null : (opened.get(e.ticket) ?? ctx.openOf(e.ticket));
     all = addTo(all, e, ctx, open);
     if (e.kind === "opened") {
-      opened.set(e.ticket, { price: e.price, payoutMax: e.payoutMax });
+      opened.set(e.ticket, {
+        price: e.price,
+        payoutMax: e.payoutMax,
+        beacon: e.beacon,
+        integrator: e.integrator,
+      });
       closed.delete(e.ticket);
     } else {
       opened.delete(e.ticket);
@@ -175,6 +268,21 @@ export function applyTx(totals: Totals, events: readonly TicketEvent[], ctx: TxC
     }
   }
   return { totals: { all }, opened, closed };
+}
+
+/**
+ * The totals with the kind of `ticket`'s win filled in from its opening, for a win counted
+ * before its opening was read (a transaction set aside and counted later); unchanged otherwise.
+ */
+export function withWinKind(totals: Totals, ticket: Address, open: OpenTicket): Totals {
+  const fill = (w: Win | null): Win | null =>
+    w && w.ticket === ticket && w.kind === null ? { ...w, kind: winKind(open) } : w;
+  const split = (s: Split): Split => ({
+    ...s,
+    biggestWin: fill(s.biggestWin),
+    lastWin: fill(s.lastWin),
+  });
+  return { all: split(totals.all) };
 }
 
 // --- storage and the API -----------------------------------------------------------------

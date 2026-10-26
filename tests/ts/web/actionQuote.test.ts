@@ -12,7 +12,8 @@ import {
 } from "../../../apps/web/src/lib/actionQuote.ts";
 import type { Vault } from "../../../apps/web/src/lib/fade.ts";
 import { usdc } from "../../../apps/web/src/lib/format.ts";
-import { closeOnGrid, settleEta, valueOf } from "../../../apps/web/src/lib/position.ts";
+import { closeOnGrid, settleEta } from "../../../apps/web/src/lib/position.ts";
+import { valueOf } from "../../../apps/web/src/lib/providers.ts";
 import { DEVNET, SHARE, T0, USDC, live, rng } from "./fixtures.ts";
 
 const vault = (assets: bigint, shares: bigint) =>

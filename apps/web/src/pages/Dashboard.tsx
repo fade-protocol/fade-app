@@ -46,7 +46,8 @@ import {
   positionApr,
   positionSeries,
 } from "../lib/positionPnl";
-import { fmtApr, type TicketRow } from "../lib/ticketLog";
+import { APR_LABEL, fmtApr, winPayout, type TicketRow } from "../lib/ticketLog";
+import type { AppTotals, BuyerTotals } from "../lib/walletHistory";
 import { shareWinOfRow } from "../lib/shareWin";
 import { send, type ProgramFailure } from "../lib/tx";
 import { boosterExtra, buyerLine } from "../lib/ticketWords";
@@ -298,7 +299,7 @@ function VaultInvite({ state }: { state: Live }) {
         Every ticket on Fade leaves a margin to the vault. Deposit USDC and earn it.
       </p>
       <p className="dinvite-apr">
-        <span className="dfig-label">Vault est. APR</span>
+        <span className="dfig-label">Vault {APR_LABEL}</span>
         <span className="dinvite-apr-value">
           <AprFigure apr={apr} />
         </span>
@@ -501,7 +502,11 @@ function VaultTab({ data, model }: { data: VaultData; model: VaultModel | null }
           valueClass={myApr?.pct != null && myApr.pct < 0 ? " neg" : ""}
           sub="since your first deposit"
         />
-        <Fig label="Vault est. APR" value={<AprFigure apr={apr} />} sub="last 24 h of volume" />
+        <Fig
+          label={`Vault ${APR_LABEL}`}
+          value={<AprFigure apr={apr} />}
+          sub="last 7 days, annualised"
+        />
       </div>
 
       <section className="dlist">
@@ -523,6 +528,7 @@ function bestWords(r: TicketRow, demoApp: boolean): string {
   const l = buyerLine(r, demoApp);
   if (l.kind === "Checkout") return "a free checkout";
   if (l.kind === "Booster") return `a ${boosterExtra(r, r.end?.payout ?? 0n) ?? "booster win"}`;
+  if (l.kind === "Small ticket") return "a small ticket win";
   return `a ${l.kind.toLowerCase()} won back`;
 }
 
@@ -531,7 +537,10 @@ function bestWords(r: TicketRow, demoApp: boolean): string {
  * none is parked. Read again every 20 s and on `refresh`.
  */
 function usePayoutEscrows(rows: readonly TicketRow[] | null, usdcAccount: Address | null) {
-  const parked = useMemo(() => (rows ? parkedPayouts(rows) : []), [rows]);
+  const parked = useMemo(
+    () => (rows && usdcAccount ? parkedPayouts(rows, usdcAccount) : []),
+    [rows, usdcAccount],
+  );
   const key = parked.map((r) => r.ticket).join(",");
   const read = usePolling(
     async () => (usdcAccount ? readEscrows(parked, usdcAccount) : new Map<Address, Escrow>()),
@@ -566,7 +575,8 @@ function usePayoutClaim(signer: TransactionSigner | undefined, reread: () => voi
     setFailure(null);
     try {
       const ixs = await claimPayoutInstructions(signer, ticket, escrow);
-      const s = await send(signer, ixs, "claim_payout", 200_000);
+      const label = "roundTicket" in escrow ? "claim_round_payout" : "claim_payout";
+      const s = await send(signer, ixs, label, 200_000);
       setSent({ ticket, sig: s.signature });
       setTimeout(done, CLAIMED_FLASH_MS);
     } catch (e) {
@@ -589,12 +599,15 @@ function actions(...buttons: ReactNode[]): ReactNode {
 
 function TicketsTab({
   rows,
+  totals,
   myIntegrator,
   usdcAccount,
   signer,
   app,
 }: {
   rows: TicketRow[] | null;
+  /** The counts over every draw, when `rows` lists only the newest of them; else null. */
+  totals: BuyerTotals | null;
   myIntegrator: Address | null;
   /** The wallet's USDC account, the beneficiary of its tickets. */
   usdcAccount: Address | null;
@@ -612,7 +625,7 @@ function TicketsTab({
     // the log only knows the payout was parked; the chain says it has since been delivered
     const shown =
       escrow?.state === "claimed" && r.end ? { ...r, end: { ...r.end, pending: false } } : r;
-    const l = buyerLine(shown, demo(r));
+    const l = buyerLine(shown, demo(r), usdcAccount);
     const claimable = escrow?.state === "claimable" ? escrow : null;
     const flashing = payout.sent?.ticket === r.ticket && escrow?.state !== "claimed";
     return {
@@ -624,8 +637,8 @@ function TicketsTab({
       tone: l.tone,
       signature: r.end?.signature ?? r.openSig,
       stateKey: `${r.ticket}:${r.end?.kind ?? "open"}`,
-      win: (r.end?.payout ?? 0n) > 0n,
-      icon: (r.end?.payout ?? 0n) > 0n ? <WinIcon kind={l.kind} /> : undefined,
+      win: winPayout(r.end) > 0n,
+      icon: winPayout(r.end) > 0n ? <WinIcon kind={l.kind} /> : undefined,
       drawing: !r.end,
       action: actions(
         signer && (claimable || flashing) ? (
@@ -664,7 +677,13 @@ function TicketsTab({
         <Skeleton h={160} />
       </div>
     );
-  const { won, spent, wins, best, favourite, winRate } = ticketStats(rows, demo);
+  const listed = ticketStats(rows, demo);
+  const { best, favourite } = listed;
+  const n = totals?.draws ?? rows.length;
+  const wins = totals?.wins ?? listed.wins;
+  const won = totals?.won ?? listed.won;
+  const spent = totals?.spent ?? listed.spent;
+  const winRate = totals ? (n ? Math.round((wins * 100) / n) : 0) : listed.winRate;
 
   const matching = drawRows.filter((r) => filter === "all" || r.win);
   const draws = all ? matching : matching.slice(0, DRAWS_SHOWN);
@@ -674,11 +693,11 @@ function TicketsTab({
       <div className="dhero">
         <div className="dhero-main">
           <p className="dhero-value">
-            <Tween>{rows.length.toString()}</Tween>
+            <Tween>{n.toString()}</Tween>
             <span className="dhero-word">
               {" "}
-              {rows.length === 1 ? "draw" : "draws"}
-              {wins === 0 && rows.length > 0 ? ", no win yet" : ""}
+              {n === 1 ? "draw" : "draws"}
+              {wins === 0 && n > 0 ? ", no win yet" : ""}
             </span>
             {wins > 0 && (
               <>
@@ -691,7 +710,7 @@ function TicketsTab({
             )}
           </p>
           <p className="dhero-line muted">
-            {rows.length === 0
+            {n === 0
               ? "No draw yet."
               : wins > 0
                 ? `${usdc(won)} USDC won, ${usdc(spent)} USDC in tickets`
@@ -729,12 +748,12 @@ function TicketsTab({
               ) : undefined
             }
           />
-          <Fig label="Win rate" value={`${wins} of ${rows.length}`} sub={`${winRate} %`} />
+          <Fig label="Win rate" value={`${wins} of ${n}`} sub={`${winRate} %`} />
           {favourite && (
             <Fig
               label="Favourite"
               value={favourite[0]}
-              sub={`${favourite[1]} of ${rows.length} tickets`}
+              sub={`${favourite[1]} of ${rows.length} ${totals ? "recent " : ""}tickets`}
             />
           )}
         </div>
@@ -765,7 +784,11 @@ function TicketsTab({
           )}
           {matching.length > DRAWS_SHOWN && (
             <button type="button" className="link-btn small" onClick={() => setAll((a) => !a)}>
-              {all ? "Fewer draws" : `Show all ${matching.length} draws`}
+              {all
+                ? "Fewer draws"
+                : totals
+                  ? `Show ${matching.length} of ${filter === "all" ? n : wins} draws`
+                  : `Show all ${matching.length} draws`}
             </button>
           )}
         </section>
@@ -776,7 +799,18 @@ function TicketsTab({
 }
 
 /** For a wallet whose app opens tickets for others: what its app did, compact. */
-function MyApp({ state, owner, rows }: { state: Live; owner: Address; rows: TicketRow[] | null }) {
+function MyApp({
+  state,
+  owner,
+  rows,
+  totals,
+}: {
+  state: Live;
+  owner: Address;
+  rows: TicketRow[] | null;
+  /** The counts over every ticket of the app, when `rows` lists only the newest; else null. */
+  totals: AppTotals | null;
+}) {
   const record = usePolling(
     async () => ({ owner, data: await fetchIntegrator(owner), ownUsdc: await ata(owner) }),
     30_000,
@@ -787,19 +821,22 @@ function MyApp({ state, owner, rows }: { state: Live; owner: Address; rows: Tick
   // a real app opens tickets that pay someone else; a buyer of the demos has a record too
   const servesOthers = !!record.data && mine.some((r) => r.beneficiary !== record.data!.ownUsdc);
   if (!integrator || !servesOthers) return null;
-  const { appShare, paid, cap, used } = appFigures(
+  const figures = appFigures(
     mine,
     integrator.reservedLiability,
     state.vault.totalAssets,
     state.config.params.whaleBps,
   );
+  const { cap, used } = figures;
+  const appShare = totals?.appShare ?? figures.appShare;
+  const paid = totals?.paid ?? figures.paid;
   return (
     <section className="dlist">
       <h2 className="dlist-title label-tip">
         My app
         <InfoTip label="About my app" docs>
-          Tickets your app opened for its users. Figures cover the tickets read on this page; the
-          ticket count is the record's own.
+          Tickets your app opened for its users. Figures cover the tickets in your app's history;
+          the ticket count is the record's own.
         </InfoTip>
       </h2>
       <div className="dfigs dfigs-one">
@@ -854,10 +891,16 @@ function RoleCard({
 function Dashboard({ state }: { state: Live }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const protocol = useProtocol();
-  const data = useVaultData(state, refreshKey, () => {
-    setRefreshKey((k) => k + 1);
-    protocol.refresh();
-  });
+  // the dashboard shows no Providers table: none of its reads
+  const data = useVaultData(
+    state,
+    refreshKey,
+    () => {
+      setRefreshKey((k) => k + 1);
+      protocol.refresh();
+    },
+    { providers: false },
+  );
   const owner = useOwner();
   const { account, signer } = useWallet();
   // a claim is signed by the wallet this page shows, never for a `?as=` view
@@ -876,6 +919,9 @@ function Dashboard({ state }: { state: Live }) {
     () => (t ? t.rows.filter((r) => r.integrator === t.integrator) : null),
     [t],
   );
+  // a role whose newest tickets alone are listed: its counts are over all of them
+  const buyerTotals = t && !t.complete.buyer ? t.totals.buyer : null;
+  const appTotals = t && !t.complete.app ? t.totals.app : null;
 
   if (!owner)
     return (
@@ -929,7 +975,9 @@ function Dashboard({ state }: { state: Live }) {
       </>
     );
 
-  const buyerWins = buyerRows?.filter((r) => (r.end?.payout ?? 0n) > 0n).length ?? 0;
+  const buyerDraws = buyerTotals?.draws ?? buyerRows?.length ?? 0;
+  const buyerWins =
+    buyerTotals?.wins ?? buyerRows?.filter((r) => winPayout(r.end) > 0n).length ?? 0;
 
   return (
     <>
@@ -956,11 +1004,11 @@ function Dashboard({ state }: { state: Live }) {
           figure={
             !buyerRows ? (
               <Skeleton w={90} h={26} inline />
-            ) : buyerRows.length ? (
+            ) : buyerDraws ? (
               <span className="dtab-count">
-                <Tween>{buyerRows.length.toString()}</Tween>
+                <Tween>{buyerDraws.toString()}</Tween>
                 <span className="dtab-figsub">
-                  {buyerRows.length === 1 ? "draw" : "draws"},{" "}
+                  {buyerDraws === 1 ? "draw" : "draws"},{" "}
                   {buyerWins > 0 ? `${buyerWins} won` : "no win yet"}
                 </span>
               </span>
@@ -987,10 +1035,11 @@ function Dashboard({ state }: { state: Live }) {
         {view === "tickets" && (
           <TicketsTab
             rows={buyerRows}
+            totals={buyerTotals}
             myIntegrator={t?.integrator ?? null}
             usdcAccount={t?.usdcAccount ?? null}
             signer={ownSigner}
-            app={<MyApp state={state} owner={owner} rows={appRows} />}
+            app={<MyApp state={state} owner={owner} rows={appRows} totals={appTotals} />}
           />
         )}
       </section>

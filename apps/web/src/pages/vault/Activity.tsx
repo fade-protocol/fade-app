@@ -1,15 +1,40 @@
 // Activity: what the vault did lately. Four figures over the last 24 h, then one line per ticket
-// (its opening, draw and settlement told as one sentence) and one per deposit or withdrawal.
-import { useMemo, useState } from "react";
-import { EventRows, stateKeys, type EventRow } from "../../components/EventRows";
+// (its opening, draw and settlement told as one sentence) and one per deposit or withdrawal. The
+// figures and the newest lines are the keeper's (GET /v1/vault and GET /v1/feed, lib/keeperViews),
+// shown at once; behind them, the lines the app read itself (lib/vaultActivity): the vault's
+// history, always read on this page, and the program's tickets, read once the visitor asks for
+// older lines (the Wins filter, "Show more" on the full list) or once the first page reaches
+// past the feed's horizon. The feed holds every ticket opened since its horizon
+// (lib/keeperViews `feedHorizon`) and, older, only those with a recent event: the list stops at
+// the horizon until the program's tickets are read, so no line stands where others of its time
+// are missing. When the keeper cannot serve a part, the app's own reads stand in for it, each
+// part on its own (the requests and the closes reach back further than the tickets, and may
+// still be read by the keeper); its figures, while the keeper still reads the last day, say the
+// span they cover.
+import { useEffect, useMemo, useState } from "react";
+import { EventRows, stateKeys } from "../../components/EventRows";
 import { Tween, useFreshKeys } from "../../components/motion";
 import { Skeleton } from "../../components/ui";
-import { shares as fmtShares, signedAmount, usdc, usdcTidy as amount } from "../../lib/format";
-import { strikeSeries } from "../../lib/history";
-import { priceAt, valueAt } from "../../lib/positionPnl";
+import { signedAmount, usdc, usdcTidy as amount } from "../../lib/format";
+import { livePoint, strikeSeries } from "../../lib/history";
+import {
+  asPartial,
+  chooseView,
+  feedHorizon,
+  type KeeperFeed,
+  type KeeperVault,
+} from "../../lib/keeperViews";
 import type { TicketLog } from "../../lib/ticketLog";
-import { vaultLine } from "../../lib/ticketWords";
-import { activityFigures } from "../../lib/vaultFigures";
+import {
+  activityRows,
+  feedRequestsOf,
+  needsOlderTickets,
+  requestsOf,
+  withOlderCloses,
+  withinHorizon,
+} from "../../lib/vaultActivity";
+import { activityFigures, spanWords, type ActivityFigures } from "../../lib/vaultFigures";
+import { ACTIVITY_WINDOW_S } from "../../lib/vaultViews";
 import type { VaultData } from "./common";
 
 type Filter = "all" | "wins" | "lp";
@@ -20,77 +45,127 @@ const FILTERS: { id: Filter; label: string }[] = [
 ];
 const PAGE = 40;
 
-type Row = EventRow & { kind: "ticket" | "lp" };
-
-export function ActivityPanel({ data, tickets }: { data: VaultData; tickets: TicketLog | null }) {
+export function ActivityPanel({
+  data,
+  keeper,
+  feed,
+  tickets,
+  olderPending,
+  onOlder,
+}: {
+  data: VaultData;
+  /** The keeper's vault history (the figures, the closes), null until it answers or when down. */
+  keeper: KeeperVault | null;
+  /** The keeper's newest tickets and requests, null until it answers or when it cannot be reached. */
+  feed: KeeperFeed | null;
+  /**
+   * The program's tickets the app read itself: when the keeper cannot serve them, or once
+   * `onOlder` asked for the lines behind the feed's.
+   */
+  tickets: TicketLog | null;
+  /** The program's tickets were asked for and are still being read. */
+  olderPending: boolean;
+  /** The visitor asks for older lines than the feed's: the page reads the program's tickets. */
+  onOlder: () => void;
+}) {
   const [filter, setFilter] = useState<Filter>("all");
   const [count, setCount] = useState(PAGE);
   const now = Math.floor(Date.now() / 60_000) * 60;
   const items = data.log?.items ?? null;
+  // each line is true on its own: the feed's partial lines show while the app reads its own
+  const lines = chooseView(feed, tickets, undefined, asPartial);
+  const fromFeed = lines && "keeper" in lines ? lines.keeper : null;
+  const ownTickets = lines && "own" in lines ? lines.own : null;
+  const asked = chooseView(feed, items, (f) => f.requestsSyncing, asPartial);
+  const feedRequests = asked && "keeper" in asked ? asked.keeper.requests : null;
+  const closes = chooseView(keeper, items, (k) => k.seriesSyncing, asPartial);
+  const keeperCloses = closes && "keeper" in closes ? closes.keeper : null;
+  const ownCloses = useMemo(
+    () => (items ? strikeSeries(items, data.state.vault, now) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, data.state.vault],
+  );
 
   const rows = useMemo(() => {
-    if (!tickets || !items) return null;
-    const prices = strikeSeries(items, data.state.vault, now).map((p) => ({
-      t: p.t,
-      price: p.price,
-    }));
-    const out: Row[] = tickets.rows.map((r) => {
-      const l = vaultLine(r, false);
-      return {
-        kind: "ticket",
-        key: r.ticket,
-        stateKey: `${r.ticket}:${r.end?.kind ?? "open"}`,
-        t: r.openedAt,
-        title: l.title,
-        detail: l.detail,
-        amount: l.amount,
-        tone: l.tone,
-        win: l.tone === "won",
-        drawing: !r.end,
-        signature: r.end?.signature ?? r.openSig,
-      };
+    const ownRequests = items && requestsOf(items);
+    const ticketHead = fromFeed?.rows ?? ownTickets?.rows ?? null;
+    const requestHead = feedRequests ? feedRequestsOf(feedRequests) : ownRequests;
+    if (!ticketHead || !requestHead) return null;
+    // a withdrawal is valued at the share price of its time: after the closes, then today's
+    const prices = keeperCloses
+      ? withOlderCloses(keeperCloses.strikes, ownCloses, livePoint(data.state.vault, now))
+      : (ownCloses ?? []);
+    return activityRows({
+      tickets: { head: ticketHead, tail: fromFeed ? (tickets?.rows ?? null) : null },
+      requests: { head: requestHead, tail: feedRequests ? ownRequests : null },
+      prices,
+      now,
     });
-    for (const item of items)
-      item.events.forEach((e, i) => {
-        const base = {
-          kind: "lp" as const,
-          key: `${item.signature}-${i}`,
-          t: item.blockTime,
-          signature: item.signature,
-          tone: "plain" as const,
-        };
-        if (e.kind === "DepositRequested")
-          out.push({
-            ...base,
-            title: "Deposit",
-            detail: `a liquidity provider added ${amount(e.data.amount)} USDC`,
-            amount: `+${amount(e.data.amount)}`,
-          });
-        else if (e.kind === "WithdrawRequested") {
-          const p = priceAt(prices, item.blockTime ?? now);
-          out.push({
-            ...base,
-            title: "Withdrawal",
-            detail: `a liquidity provider took out ${fmtShares(e.data.shares)} fvUSDC`,
-            amount: p === null ? "" : `−${usdc(valueAt(e.data.shares, p))}`,
-          });
-        }
-      });
-    return out.sort((a, b) => (b.t ?? now) - (a.t ?? now));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickets, items, data.state.vault]);
+  }, [
+    fromFeed,
+    ownTickets,
+    tickets,
+    feedRequests,
+    items,
+    keeperCloses,
+    ownCloses,
+    data.state.vault,
+  ]);
 
-  const fresh = useFreshKeys(rows ? stateKeys(rows) : null);
-
-  const figures = useMemo(
-    () => (tickets && items ? activityFigures(tickets, items, now) : null),
+  // Past the feed's horizon, while the program's tickets are not read, the list stops: older
+  // tickets with no recent event are not in the feed (the deposits and withdrawals filter
+  // shows only requests, held in full, and stops nowhere)
+  const horizon = fromFeed && !tickets && filter !== "lp" ? feedHorizon(fromFeed) : null;
+  const cut = useMemo(
+    () => (rows ? withinHorizon(rows, horizon, now) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tickets, items],
+    [rows, horizon],
   );
+  const shown = cut?.shown ?? null;
+  const held = cut?.held ?? 0;
 
-  const matching = (rows ?? []).filter((r) =>
+  // the lines behind the feed's are no arrivals: they do not light up as they load
+  const fresh = useFreshKeys(shown ? stateKeys(shown.filter((r) => !r.older)) : null);
+
+  // the keeper's 24 h, else the app's own over the tickets and the history it read, else the
+  // keeper's while it still reads the history, over the span it covers
+  const figures = useMemo((): ActivityFigures | null => {
+    const source = chooseView(
+      keeper,
+      tickets && items ? { tickets, items } : null,
+      undefined,
+      (k) => k.coveredFrom !== null,
+    );
+    if (!source) return null;
+    if ("keeper" in source) {
+      const from = source.keeper.coveredFrom;
+      const span =
+        source.keeper.syncing && from !== null && from > now - ACTIVITY_WINDOW_S
+          ? spanWords(now - from)
+          : "24 h";
+      return { ...source.keeper.activity, span };
+    }
+    return activityFigures(source.own.tickets, source.own.items, now);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keeper, tickets, items]);
+
+  const failed = data.logError !== null && !fromFeed;
+
+  const matching = (shown ?? []).filter((r) =>
     filter === "all" ? true : filter === "wins" ? r.win : r.kind === "lp",
   );
+
+  const needsOlder = needsOlderTickets({
+    filter,
+    count,
+    page: PAGE,
+    shown: matching.length,
+    held,
+  });
+  useEffect(() => {
+    if (needsOlder) onOlder();
+  }, [needsOlder, onOlder]);
 
   return (
     <section className="activity" aria-label="Recent activity">
@@ -153,19 +228,21 @@ export function ActivityPanel({ data, tickets }: { data: VaultData; tickets: Tic
             </button>
           ))}
         </div>
-        {!rows && !data.logError && (
+        {!rows && !failed && (
           <div className="stack-s">
             <Skeleton h={22} />
             <Skeleton h={22} />
             <Skeleton h={22} />
           </div>
         )}
-        {data.logError && !rows && (
+        {failed && !rows && (
           <p className="error small">
             The network did not answer ({data.logError}). This list tries again every 30 seconds.
           </p>
         )}
-        {rows && matching.length === 0 && <p className="small muted">Nothing yet.</p>}
+        {rows && matching.length === 0 && !olderPending && !(needsOlder && held > 0) && (
+          <p className="small muted">Nothing yet.</p>
+        )}
         {matching.length > 0 && (
           <EventRows
             rows={matching.slice(0, count)}
@@ -174,7 +251,13 @@ export function ActivityPanel({ data, tickets }: { data: VaultData; tickets: Tic
             fresh={fresh}
           />
         )}
-        {matching.length > count && (
+        {rows && matching.length < count && olderPending && (
+          <div className="stack-s">
+            <Skeleton h={22} />
+            <Skeleton h={22} />
+          </div>
+        )}
+        {(matching.length > count || (filter === "all" && held > 0 && !olderPending)) && (
           <button
             type="button"
             className="link-btn small"

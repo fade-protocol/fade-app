@@ -1,4 +1,6 @@
-// The vault's history, read from the chain alone: no indexer, no database.
+// The vault's history, read from the chain: the Queue's signatures and the owner-scoped reads
+// below. One owner's history is the keeper's when it can serve it (lib/keeperWallet); these
+// reads are its fallback.
 //
 // Every request and every strike writes the Queue account, so its signature
 // list is the LP log; claims usually write it too (when they close a record
@@ -6,25 +8,14 @@
 // the rest. Epoch records close once claimed, so the share-price series comes
 // from the `EpochStruck` events, not from the records.
 import type { Address, Signature } from "@solana/kit";
-import { txDecoder, type FadeEvent } from "./events";
+import { txDecoder } from "./events";
 import { ata, pdas, withdrawRequestPda, type Vault } from "./fade";
 import { rpc } from "./rpc";
 import { eventsFor } from "./txCache";
+import { afterStrike, sharePrice } from "./vaultViews";
+import { LP_KINDS, mergeOwnerItems, ownerItemsOf, type LpItem } from "./walletHistory";
 
-export type LpItem = {
-  signature: Signature;
-  blockTime: number | null;
-  events: FadeEvent[];
-};
-
-const LP_KINDS = new Set<FadeEvent["kind"]>([
-  "DepositRequested",
-  "DepositClaimed",
-  "WithdrawRequested",
-  "WithdrawClaimed",
-  "ClaimDelivered",
-  "EpochStruck",
-]);
+export { ownerOf, type LpItem } from "./walletHistory";
 
 /** The newest `max` successful signatures of `account`, newest first. */
 async function signatures(account: Address, max: number) {
@@ -77,20 +68,6 @@ export async function fetchLpLog(): Promise<LpLog> {
   return { items: await load(sigs), truncated: sigs.length >= LP_LOG_MAX };
 }
 
-/** The LP owner an event belongs to, if any. */
-export function ownerOf(e: FadeEvent): Address | null {
-  switch (e.kind) {
-    case "DepositRequested":
-    case "DepositClaimed":
-    case "WithdrawRequested":
-    case "WithdrawClaimed":
-    case "ClaimDelivered":
-      return e.data.owner;
-    default:
-      return null;
-  }
-}
-
 /**
  * One owner's LP transactions, newest first: the vault log filtered to them,
  * plus their share account's history (deposit claims) and their withdrawal
@@ -98,22 +75,17 @@ export function ownerOf(e: FadeEvent): Address | null {
  */
 export async function fetchOwnerLog(owner: Address, vaultLog: LpItem[]): Promise<LpItem[]> {
   const p = await pdas();
-  const mine = (items: LpItem[]) =>
-    items
-      .map((i) => ({ ...i, events: i.events.filter((e) => ownerOf(e) === owner) }))
-      .filter((i) => i.events.length > 0);
   const fromShares = await load(await signatures(await ata(owner, p.shareMint), 1_000));
-  const merged = new Map<string, LpItem>();
-  for (const i of [...mine(vaultLog), ...mine(fromShares)]) merged.set(i.signature, i);
+  let merged = mergeOwnerItems(ownerItemsOf(vaultLog, owner), ownerItemsOf(fromShares, owner));
   const withdrawEpochs = new Set<bigint>();
-  for (const i of merged.values())
+  for (const i of merged)
     for (const e of i.events)
       if (e.kind === "WithdrawRequested") withdrawEpochs.add(e.data.epochId);
   for (const epoch of withdrawEpochs) {
     const items = await load(await signatures(await withdrawRequestPda(epoch, owner), 200));
-    for (const i of mine(items)) merged.set(i.signature, i);
+    merged = mergeOwnerItems(merged, ownerItemsOf(items, owner));
   }
-  return [...merged.values()].sort((a, b) => (b.blockTime ?? 0) - (a.blockTime ?? 0));
+  return merged;
 }
 
 export type PricePoint = {
@@ -126,18 +98,7 @@ export type PricePoint = {
   epochId: bigint | null;
 };
 
-const SHARE_UNIT = 1_000_000_000n;
-/** The program's virtual offsets (fade-math shares.rs): `A + 1` assets for `S + 1000` shares. */
-const VIRTUAL_ASSETS = 1n;
-const VIRTUAL_SHARES = 1_000n;
-
-/**
- * Micro-USDC per whole share for `assets` against `shares`, as the program prices a share
- * (fade-math `assets_for_shares` of one whole share, `drawdown::share_price` scaled down):
- * `(A + 1) / (S + 1000)`, rounded down. Null with no shares.
- */
-export const sharePrice = (assets: bigint, shares: bigint) =>
-  shares === 0n ? null : ((assets + VIRTUAL_ASSETS) * SHARE_UNIT) / (shares + VIRTUAL_SHARES);
+export { sharePrice };
 
 /** The vault's settled price now: open payouts' tickets left out, as a strike does. */
 export const livePrice = (vault: Vault) =>
@@ -145,7 +106,7 @@ export const livePrice = (vault: Vault) =>
 
 /**
  * The share price and vault assets after each strike, oldest first, from the
- * `EpochStruck` events, then the live figures as the last point.
+ * `EpochStruck` events (`afterStrike`, lib/vaultViews), then the live figures as the last point.
  */
 export function strikeSeries(log: LpItem[], vault: Vault, now: number): PricePoint[] {
   const points: PricePoint[] = [];
@@ -154,22 +115,23 @@ export function strikeSeries(log: LpItem[], vault: Vault, now: number): PricePoi
     for (const e of item.events) {
       if (e.kind !== "EpochStruck" || seen.has(e.data.epochId)) continue;
       seen.add(e.data.epochId);
-      const d = e.data;
-      const assets = d.totalAssets + d.deposits - d.assetsPaid;
-      const shares = d.totalShares + d.sharesMinted - d.sharesBurnt;
-      const price = sharePrice(assets, shares);
+      const { assets, price } = afterStrike(e.data);
       if (price === null) continue;
-      points.push({ t: item.blockTime ?? now, price, assets, epochId: d.epochId });
+      points.push({ t: item.blockTime ?? now, price, assets, epochId: e.data.epochId });
     }
   }
-  const live = livePrice(vault);
-  // on the settled assets, as the strike points are (open payouts' tickets left out)
-  if (live !== null)
-    points.push({
-      t: now,
-      price: live,
-      assets: vault.totalAssets - vault.openVaultCredits,
-      epochId: null,
-    });
+  const live = livePoint(vault, now);
+  if (live) points.push(live);
   return points;
+}
+
+/**
+ * Today's point of the share price series: the live price on the settled assets, as the strike
+ * points are (open payouts' tickets left out). Null with no shares.
+ */
+export function livePoint(vault: Vault, now: number): PricePoint | null {
+  const price = livePrice(vault);
+  return price === null
+    ? null
+    : { t: now, price, assets: vault.totalAssets - vault.openVaultCredits, epochId: null };
 }

@@ -1,12 +1,22 @@
 import type { Address, TransactionSigner } from "@solana/kit";
 import type { ProtocolState } from "../../lib/fade";
 import type { LpItem, LpLog } from "../../lib/history";
-import type { DepositReq, PendingRequest, Rec, Summary, WithdrawReq } from "../../lib/position";
+import type { PendingRequest, Summary } from "../../lib/position";
+import type { DepositReq, ProviderLine, Rec, WithdrawReq } from "../../lib/providers";
 import { TxError, type ProgramFailure } from "../../lib/tx";
 
 export type Live = Extract<ProtocolState, { initialized: true }>;
 
-export type Requests = { deposits: DepositReq[]; withdraws: WithdrawReq[]; records: Rec[] };
+export type Requests = {
+  deposits: DepositReq[];
+  withdraws: WithdrawReq[];
+  records: Rec[];
+  /**
+   * Whose requests were read: everyone's while the app lists the providers itself, else the
+   * owner's alone (none without an owner). The open epoch records are read in full either way.
+   */
+  scope: "all" | Address | null;
+};
 
 export type WalletBalances = {
   usdc: bigint | null;
@@ -27,7 +37,13 @@ export type VaultData = {
   log: LpLog | null;
   logError: string | null;
   requests: Requests | null;
-  holders: { owner: Address; amount: bigint }[] | null;
+  /**
+   * The liquidity providers, largest holding first (lib/keeperViews `chooseProviders`): the
+   * keeper's list, or the app's own scan while the keeper cannot serve it, with the owner's own
+   * line read from the chain. `firstDeposits`: each line's first deposit is known where it has one.
+   * Null while waiting, and on a page that does not show them (`useVaultData` `providers: false`).
+   */
+  providers: { lines: ProviderLine[]; firstDeposits: boolean } | null;
   wallet: WalletBalances | null;
   ownerLog: LpItem[] | null;
   /** The owner's open requests with their phase. */

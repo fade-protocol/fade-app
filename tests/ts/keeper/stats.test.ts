@@ -4,7 +4,11 @@ import { getBase58Decoder, type Address } from "@solana/kit";
 import { describe, expect, it } from "vitest";
 import {
   getPayoutClaimedEventEncoder,
+  getRoundPayoutClaimedEventEncoder,
+  getRoundTicketReturnedEventEncoder,
+  getRoundTicketSettledEventEncoder,
   getTicketExpiredEventEncoder,
+  getTicketJoinedEventEncoder,
   getTicketOpenedEventEncoder,
   getTicketSettledEventEncoder,
 } from "../../../clients/js/src/generated/fade/index.ts";
@@ -65,7 +69,75 @@ const settledData = (ticket: Address, integrator: Address, paid: bigint) =>
     }),
   );
 const expiredData = (ticket: Address, integrator: Address) =>
-  emitted(getTicketExpiredEventEncoder().encode({ version: 1, ticket, integrator, forfeited: 0 }));
+  emitted(
+    getTicketExpiredEventEncoder().encode({
+      version: 2,
+      ticket,
+      integrator,
+      forfeited: 0,
+      requested: false,
+      requestFound: false,
+      checked: true,
+      pending: false,
+      refunded: false,
+      refund: 0,
+      parked: false,
+      ticketForfeitsWithheld: 0,
+    }),
+  );
+const ROUND = A("Round");
+const joinedData = (ticket: Address, integrator: Address, price: bigint, payoutMax: bigint) =>
+  emitted(
+    getTicketJoinedEventEncoder().encode({
+      version: 1,
+      ticket,
+      round: ROUND,
+      integrator,
+      nonce: 1,
+      beneficiary: A("Ben"),
+      refundTo: A("Ben"),
+      payoutTable: A("Table"),
+      price,
+      vaultCredit: price,
+      payoutMax,
+      reservedLiability: payoutMax,
+      cap: payoutMax,
+      usage: payoutMax,
+      protocolShare: 0,
+      appShare: 0,
+      prepay: 5_000,
+      slot: 10,
+      payer: A("Payer"),
+      funder: A("Payer"),
+      settleShare: 2_000,
+    }),
+  );
+const roundSettledData = (ticket: Address, integrator: Address, paid: bigint, pending = false) =>
+  emitted(
+    getRoundTicketSettledEventEncoder().encode({
+      version: 1,
+      ticket,
+      round: ROUND,
+      integrator,
+      outcome: paid > 0n ? 0 : 1,
+      payout: paid,
+      charge: 1_500,
+      pending,
+    }),
+  );
+const returnedData = (ticket: Address, refunded: boolean, price: bigint) =>
+  emitted(
+    getRoundTicketReturnedEventEncoder().encode({
+      version: 1,
+      ticket,
+      round: ROUND,
+      refunded,
+      price: refunded ? price : 0n,
+      lamports: 5_000,
+      parked: false,
+      charge: 0,
+    }),
+  );
 
 /** A transaction whose inner instructions carry `datas`, each from `programs[i]` (the program by default). */
 function tx(datas: string[], opts: { err?: unknown; programs?: Address[] } = {}): JsonTx {
@@ -116,8 +188,15 @@ describe("ticket events of a transaction", () => {
       PROGRAM,
     );
     expect(events).toEqual([
-      { kind: "opened", ticket: t1, integrator: APP, price: 2n * USDC, payoutMax: 50n * USDC },
-      { kind: "settled", ticket: t1, integrator: APP, payout: 50n * USDC },
+      {
+        kind: "opened",
+        ticket: t1,
+        integrator: APP,
+        price: 2n * USDC,
+        payoutMax: 50n * USDC,
+        beacon: false,
+      },
+      { kind: "settled", ticket: t1, integrator: APP, payout: 50n * USDC, beacon: false },
       { kind: "expired", ticket: t2, integrator: SECOND_APP },
     ]);
   });
@@ -150,6 +229,122 @@ describe("ticket events of a transaction", () => {
   });
 });
 
+describe("beacon ticket events", () => {
+  it("decodes joins, round settlements and returns, from a version-1 transaction", () => {
+    const [t1, t2] = [A("J1"), A("J2")];
+    // A version-1 transaction lists every account in its message: no loaded addresses.
+    const v1 = {
+      ...tx([
+        joinedData(t1, APP, USDC / 10n, 195_600n),
+        roundSettledData(t1, APP, 195_600n, true),
+        returnedData(t2, true, USDC / 10n),
+        returnedData(A("J3"), false, USDC / 10n),
+      ]),
+      version: 1,
+    };
+    expect(ticketEventsOf(v1, PROGRAM)).toEqual([
+      {
+        kind: "opened",
+        ticket: t1,
+        integrator: APP,
+        price: USDC / 10n,
+        payoutMax: 195_600n,
+        beacon: true,
+      },
+      { kind: "settled", ticket: t1, integrator: APP, payout: 195_600n, beacon: true },
+      { kind: "returned", ticket: t2 },
+      { kind: "returned", ticket: A("J3") },
+    ]);
+  });
+
+  it("does not take a parked payout's later claim for another payout", () => {
+    const t = A("J");
+    const claim = emitted(
+      getRoundPayoutClaimedEventEncoder().encode({
+        version: 1,
+        ticket: t,
+        destination: A("Ben"),
+        amount: 195_600n,
+      }),
+    );
+    expect(ticketEventsOf(tx([claim]), PROGRAM)).toEqual([]);
+  });
+
+  it("counts a join as opened, a settlement as drawn, its payout as a win, a return as no draw", () => {
+    const price = USDC / 10n;
+    const [won, lost, refunded, forfeited, mine] = ["W", "L", "R", "F", "M"].map(A) as [
+      Address,
+      Address,
+      Address,
+      Address,
+      Address,
+    ];
+    const events = (datas: string[]) => ticketEventsOf(tx(datas), PROGRAM);
+    const t = run([
+      {
+        sig: "1",
+        at: 100,
+        events: events([
+          joinedData(won, SECOND_APP, price, 195_600n),
+          joinedData(lost, SECOND_APP, price, 195_600n),
+          joinedData(refunded, APP, price, 195_600n),
+          joinedData(forfeited, APP, price, 195_600n),
+          joinedData(mine, APP, price, 195_600n),
+        ]),
+      },
+      // the winner's payout parked in escrow: counted, it is owed to the winner
+      { sig: "2", at: 110, events: events([roundSettledData(won, SECOND_APP, 195_600n, true)]) },
+      { sig: "3", at: 120, events: events([roundSettledData(lost, SECOND_APP, 0n)]) },
+      {
+        sig: "4",
+        at: 130,
+        events: events([
+          returnedData(refunded, true, price),
+          returnedData(forfeited, false, price),
+        ]),
+      },
+      { sig: "5", at: 140, events: events([roundSettledData(mine, APP, 195_600n)]) },
+    ]);
+    expect(t.all).toMatchObject({
+      ticketsOpened: 5,
+      ticketsDrawn: 3,
+      ticketsExpired: 2,
+      wins: 2,
+      paid: 2n * 195_600n,
+    });
+    expect(t.all.lastWin).toEqual({
+      payout: 195_600n,
+      kind: "Small ticket",
+      ticket: mine,
+      at: 140,
+      signature: "5",
+    });
+    expect(t.all.biggestWin).toMatchObject({ ticket: won, kind: "Small ticket" });
+  });
+
+  it("names a beacon win a small ticket even when its join was not read", () => {
+    const t = A("N");
+    const totals = run([
+      { sig: "1", at: 5, events: ticketEventsOf(tx([roundSettledData(t, APP, 9n)]), PROGRAM) },
+    ]);
+    expect(totals.all.lastWin).toMatchObject({ ticket: t, kind: "Small ticket" });
+  });
+
+  it("counts a return whose join was not read", () => {
+    const [t, d] = [A("T"), A("D")];
+    const r = applyTx(
+      emptyTotals(),
+      [
+        { kind: "returned", ticket: t },
+        { kind: "returned", ticket: d },
+      ],
+      { signature: "1", at: 1, openOf: () => null },
+    );
+    expect(r.totals.all.ticketsExpired).toBe(2);
+    expect(r.totals.all.wins).toBe(0);
+  });
+});
+
 describe("all-time totals", () => {
   const checkoutPrice = 2_500_000n;
   const checkoutMax = payout(checkoutPrice, checkoutPayoutTable(checkoutPrice)[0]!.m);
@@ -160,12 +355,14 @@ describe("all-time totals", () => {
       integrator: i,
       price,
       payoutMax,
+      beacon: false,
     }),
     settle: (t: Address, i: Address, paid: bigint): TicketEvent => ({
       kind: "settled",
       ticket: t,
       integrator: i,
       payout: paid,
+      beacon: false,
     }),
     expire: (t: Address, i: Address): TicketEvent => ({
       kind: "expired",

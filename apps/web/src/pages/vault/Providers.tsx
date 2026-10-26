@@ -1,20 +1,27 @@
-// Every liquidity provider: each holder of the share mint, and anyone with a
-// request still open, read straight from the chain. On the Risk tab: how concentrated the
-// vault is. The largest few first, the rest on demand.
+// Every liquidity provider: each holder of the share mint, and anyone with a request still open,
+// as the keeper lists them from the chain (the app's own scan while it cannot), the connected
+// wallet's line read by the app itself. On the Risk tab: how concentrated the vault is. The
+// largest few first, the rest on demand.
 import { useState } from "react";
 import { InfoTip } from "../../components/disclosure";
 import { Chip, ExplorerAddress, Skeleton } from "../../components/ui";
 import { bps, fv, shares as fmtShares, usdc } from "../../lib/format";
-import { providerRows, shareOfBps, valueOf } from "../../lib/position";
 import type { VaultData } from "./common";
 
 /** Providers listed before "Show all". */
 const SHOWN = 6;
 
+const day = (unixSeconds: number) =>
+  new Date(unixSeconds * 1_000).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
 export function ProvidersPanel({ data }: { data: VaultData }) {
-  const { holders, requests, state, owner } = data;
+  const { providers, owner } = data;
   const [all, setAll] = useState(false);
-  if (!holders || !requests)
+  if (!providers)
     return (
       <div className="flat-section stack-s">
         <Skeleton h={34} />
@@ -23,8 +30,8 @@ export function ProvidersPanel({ data }: { data: VaultData }) {
       </div>
     );
 
-  const list = providerRows(holders, requests.deposits, requests.withdraws, requests.records);
-  const total = state.vault.totalShares;
+  const list = providers.lines;
+  const firstDeposits = providers.firstDeposits;
 
   return (
     <section className="flat-section">
@@ -59,12 +66,16 @@ export function ProvidersPanel({ data }: { data: VaultData }) {
               <th scope="col" className="num hide-s">
                 Pending
               </th>
+              {firstDeposits && (
+                <th scope="col" className="num hide-s">
+                  First deposit
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
             {(all ? list : list.slice(0, SHOWN)).map((r, i) => {
-              const held = r.shares + r.sharesOut;
-              const pctBps = shareOfBps(held, total);
+              const pctBps = r.shareBps;
               const you = r.owner === owner;
               return (
                 <tr key={r.owner} className={you ? "you" : undefined}>
@@ -79,7 +90,7 @@ export function ProvidersPanel({ data }: { data: VaultData }) {
                     )}
                   </th>
                   <td className="num mono">{fmtShares(r.shares)}</td>
-                  <td className="num mono">{usdc(valueOf(held, state.vault))}</td>
+                  <td className="num mono">{usdc(r.value)}</td>
                   <td className="num">
                     <span className="mono">{bps(pctBps)}</span>
                     <span className="bar" aria-hidden="true">
@@ -98,6 +109,15 @@ export function ProvidersPanel({ data }: { data: VaultData }) {
                       </span>
                     )}
                   </td>
+                  {firstDeposits && (
+                    <td className="num small hide-s">
+                      {r.firstDepositAt === null ? (
+                        <span className="muted">–</span>
+                      ) : (
+                        day(r.firstDepositAt)
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}
