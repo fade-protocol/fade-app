@@ -3,8 +3,9 @@
 import type { ReactNode } from "react";
 import { InfoTip } from "../../components/disclosure";
 import { Chip, type ChipTone } from "../../components/ui";
-import { bps, fv, sol, usdc } from "../../lib/format";
+import { bps, usdc } from "../../lib/format";
 import { useChainNow } from "../../lib/hooks";
+import { PARAM_WORDS, formatParam as fmt } from "../../lib/paramWords";
 import { availableNow, drawdownOf, isHalved } from "../../lib/vaultFigures";
 import { about, type Live } from "./common";
 
@@ -79,44 +80,7 @@ export function HealthStrip({ state }: { state: Live }) {
   );
 }
 
-const WORDS: Record<string, string> = {
-  kellyFractionBps: "Kelly fraction",
-  censorshipBps: "Cap on one payout",
-  whaleBps: "Cap per app",
-  utilisationBreakerBps: "Utilisation breaker",
-  kappaBps: "Reserve ratio κ",
-  drawdownBps: "Drawdown breaker",
-  minPrice: "Minimum ticket price",
-  maxPrice: "Maximum ticket price",
-  minVaultMarginBps: "Vault margin floor",
-  protocolShareBps: "Protocol share",
-  maxAppShareBps: "Maximum app share",
-  tSettleSlots: "Draw window",
-  crankRequestLamports: "Draw request reward",
-  crankSettleLamports: "Payout delivery reward",
-  epochLengthSeconds: "Time between closes",
-  claimFeeLamports: "Delivery fee",
-  strikeFeeLamports: "Pricing fee",
-  strikeRewardLamports: "Pricing reward",
-  fundTargetLamports: "Pricing fund target",
-  minDeposit: "Minimum deposit",
-  minWithdrawShares: "Minimum withdrawal",
-  minFirstDeposit: "Minimum first deposit",
-  creditEnabled: "Credit",
-  creditBase: "Credit base",
-  creditRateBps: "Credit rate",
-};
-
-function fmt(key: string, v: unknown): string {
-  if (typeof v === "boolean") return v ? "on" : "off";
-  if (typeof v !== "bigint") return String(v);
-  if (key.endsWith("Bps")) return bps(v);
-  if (key.endsWith("Lamports")) return `${sol(v)} SOL`;
-  if (key.endsWith("Seconds")) return `${v.toString()} s`;
-  if (key.endsWith("Slots")) return `${v.toString()} slots`;
-  if (key === "minWithdrawShares") return fv(v);
-  return `${usdc(v)} USDC`;
-}
+const WORDS: Record<string, string> = PARAM_WORDS;
 
 /** Changes the council has proposed, applied by anyone once their timelock ends. */
 export function Governance({ state }: { state: Live }) {

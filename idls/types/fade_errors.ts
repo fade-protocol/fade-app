@@ -53,7 +53,23 @@ export const FadeErrorCode = {
   WrongOwner: 6050,
   NotStruck: 6051,
   VaultRequired: 6052,
-  DestinationUnusable: 6053
+  DestinationUnusable: 6053,
+  WrongRound: 6054,
+  RoundNotAccepting: 6055,
+  RoundCapacity: 6056,
+  RoundPaid: 6057,
+  WrongRoundStatus: 6058,
+  RefundWindow: 6059,
+  RoundRequestWindow: 6060,
+  DrawUnderfunded: 6061,
+  WrongPayoutTable: 6062,
+  NotCanceller: 6063,
+  ShareAccountRequired: 6064,
+  MalformedBatch: 6065,
+  RoundEpochClosed: 6066,
+  NotRoundParticipant: 6067,
+  EntropyUnrecorded: 6068,
+  EntropyStillProven: 6069
 };
 
 export type FadeErrorName = keyof typeof FadeErrorCode;

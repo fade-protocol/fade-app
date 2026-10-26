@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSplit } from "../../../apps/web/src/lib/stats.ts";
 import { PACK_TICKETS, PREMIUM_PACKS } from "../../../apps/web/src/lib/payoutTables.ts";
-import { winWords } from "../../../apps/web/src/lib/ticketWords.ts";
+import { noDrawWords, winWords } from "../../../apps/web/src/lib/ticketWords.ts";
 
 describe("the keeper's figures", () => {
   const split = {
@@ -21,6 +21,11 @@ describe("the keeper's figures", () => {
     expect(s.paid).toBe(9_007_199_254_740_993n);
     expect(s.biggestWin).toEqual({ payout: 186_900_000n, kind: "Checkout", ticket: "T", at: 5 });
     expect(s.lastWin).toEqual({ payout: 1n, kind: null, ticket: "U", at: null });
+  });
+
+  it("reads a beacon win's kind, the small ticket", () => {
+    const s = parseSplit({ ...split, lastWin: { ...split.lastWin, kind: "Small ticket" } })!;
+    expect(s.lastWin?.kind).toBe("Small ticket");
   });
 
   it("refuses a body that does not read as figures", () => {
@@ -42,5 +47,11 @@ describe("a live draw's words", () => {
     expect(winWords("Booster", price, pack)).toBe("second pack");
     expect(winWords("Booster", null, pack)).toBe("won");
     expect(winWords("Ticket", null, 1n)).toBe("won");
+    expect(winWords("Small ticket", null, 195_600n)).toBe("won");
+  });
+
+  it("never calls a ticket closed without a draw a win: a refund is a cancelled draw", () => {
+    expect(noDrawWords({})).toBe("no draw");
+    expect(noDrawWords({ refunded: true })).toBe("draw cancelled");
   });
 });

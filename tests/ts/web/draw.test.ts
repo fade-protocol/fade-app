@@ -149,6 +149,100 @@ describe("drawOfTxs", () => {
     expect(d.row.end?.kind).toBe("expired");
     expect(d.row.end?.payout).toBe(0n);
   });
+  describe("a beacon ticket", () => {
+    const joined = {
+      kind: "TicketJoined",
+      data: {
+        ticket: TICKET,
+        round: REQUEST,
+        integrator: "i",
+        beneficiary: "b",
+        payoutTable: "table",
+        price: 100_000n,
+        vaultCredit: 99_800n,
+        payoutMax: 195_600n,
+        appShare: 0n,
+        protocolShare: 200n,
+      },
+    } as unknown as FadeEvent;
+    const roundSettled = {
+      kind: "RoundTicketSettled",
+      data: { ticket: TICKET, integrator: "i", payout: 195_600n, pending: false },
+    } as unknown as FadeEvent;
+    const returned = (refunded: boolean, parked = false) =>
+      ({
+        kind: "RoundTicketReturned",
+        data: { ticket: TICKET, refunded, parked },
+      }) as unknown as FadeEvent;
+    const claimed = {
+      kind: "RoundPayoutClaimed",
+      data: { ticket: TICKET },
+    } as unknown as FadeEvent;
+
+    it("reads its join and its round's settlement, and says the small ticket won", () => {
+      const d = drawOfTxs(TICKET, [tx(DRAW, T0 + 30, roundSettled), tx(OPEN, T0, joined)])!;
+      expect(d.randomness).toBeNull();
+      expect(d.row).toMatchObject({ price: 100_000n, openedAt: T0, openSig: OPEN });
+      expect(d.row.beacon).toMatchObject({ round: REQUEST, payoutTable: "table" });
+      expect(d.row.end).toEqual({
+        kind: "settled",
+        payout: 195_600n,
+        pending: false,
+        at: T0 + 30,
+        signature: DRAW,
+      });
+      const v = drawViewOf(d.row, null);
+      expect(v).toMatchObject({ state: "won", title: "Small ticket won", amount: "+0.19 USDC" });
+      // its payout table not read: no odds rather than better ones
+      expect(v.oneIn).toBeNull();
+      expect(drawViewOf({ ...d.row, marginBps: 220n }, null).oneIn).toBe("1 in 2.0");
+    });
+
+    it("tells a refunded return, a cancelled draw, from a forfeited one", () => {
+      const refunded = drawOfTxs(TICKET, [
+        tx(DRAW, T0 + 600, returned(true)),
+        tx(OPEN, T0, joined),
+      ])!;
+      expect(refunded.row.end).toMatchObject({ kind: "expired", payout: 0n, refunded: true });
+      expect(drawViewOf(refunded.row, null)).toMatchObject({
+        state: "expired",
+        title: "Draw cancelled",
+        amount: null,
+      });
+      const forfeited = drawOfTxs(TICKET, [
+        tx(DRAW, T0 + 600, returned(false)),
+        tx(OPEN, T0, joined),
+      ])!;
+      expect(drawViewOf(forfeited.row, null).title).toBe("No draw in time");
+    });
+
+    it("keeps what was parked waiting until claim_round_payout delivers it, in any order", () => {
+      const parked = drawOfTxs(TICKET, [
+        tx(DRAW, T0 + 600, returned(true, true)),
+        tx(OPEN, T0, joined),
+      ])!;
+      expect(drawViewOf(parked.row, null)).toMatchObject({
+        state: "expired",
+        title: "Draw cancelled",
+        pending: true,
+      });
+      const parkedWin = {
+        kind: "RoundTicketSettled",
+        data: { ticket: TICKET, integrator: "i", payout: 195_600n, pending: true },
+      } as unknown as FadeEvent;
+      const CLAIM = "claim" as Signature;
+      for (const end of [returned(true, true), parkedWin]) {
+        // newest first, as the RPC lists them: the claim is read before the end it delivers
+        const d = drawOfTxs(TICKET, [
+          tx(CLAIM, T0 + 900, claimed),
+          tx(DRAW, T0 + 600, end),
+          tx(OPEN, T0, joined),
+        ])!;
+        expect(drawViewOf(d.row, null).pending).toBe(false);
+        expect(d.row.end!.signature).toBe(DRAW);
+      }
+    });
+  });
 });
 
 // --- what the page shows ---------------------------------------------------------------------

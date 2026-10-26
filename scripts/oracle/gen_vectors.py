@@ -41,7 +41,7 @@ def rand_payout_table(rng):
 
 
 def beacon_vectors(seed, count):
-    """Shared beacon: scalar cases for every function, whole rounds, seeds.
+    """Shared beacon: scalar cases for every function, whole rounds, seeds, payout table hashes.
     A generator of its own, so the files above do not move when this does."""
     rng = random.Random(seed * 1_000_003 + 9)
     rent = lambda n, per_byte: (n + 128) * per_byte
@@ -86,6 +86,8 @@ def beacon_vectors(seed, count):
             sponsorship_to_pay=R.beacon_sponsorship_to_pay(T, D, Rs, S),
             usage=None if u == "PerTicketCap" else u,
             fits=R.beacon_fits(T, D, k, U, Rs, S),
+            within_join_share=R.beacon_within_join_share(T, D, k, U, price, S, False),
+            within_join_share_paying=R.beacon_within_join_share(T, D, k, U, price, S, True),
             close_slot=R.beacon_close_slot(paid_slot, tick),
             draw_cost=R.beacon_draw_cost(funded, share, refund),
             charge=R.beacon_charge(C, S, Rs, price),
@@ -146,7 +148,15 @@ def beacon_vectors(seed, count):
                           entropy_slot=s_star, entropy_hash=h.hex(), randomness=randomness.hex(), i=i,
                           seed_preimage=sp.hex(), seed=R.sha256(sp).hex(),
                           outcome_preimage=op.hex(), outcome=R.sha256(op).hex()))
-    return dict(scalars=scalars, rounds=rounds, seeds=seeds)
+    # Drawn after everything above, so the cases above do not move.
+    tables = []
+    for _ in range(count // 10):
+        t = rand_payout_table(rng)
+        pre = R.beacon_payout_table_preimage(t)
+        tables.append(dict(outcomes=[[p, m] for p, m in t], preimage=pre.hex(), hash=R.sha256(pre).hex()))
+    for n in (0, R.MAX_OUTCOMES + 1):
+        assert R.beacon_payout_table_preimage([(1, 1)] * n) is None
+    return dict(scalars=scalars, rounds=rounds, seeds=seeds, payout_tables=tables)
 
 
 def main():
@@ -244,7 +254,8 @@ def main():
 
     b = beacon_vectors(args.seed, args.count)
     (OUT / "beacon.json").write_text(json.dumps({"seed": args.seed, "count": args.count, **b}) + "\n")
-    print(f"beacon: {len(b['scalars'])} scalar cases, {len(b['rounds'])} rounds, {len(b['seeds'])} seeds")
+    print(f"beacon: {len(b['scalars'])} scalar cases, {len(b['rounds'])} rounds, {len(b['seeds'])} seeds, "
+          f"{len(b['payout_tables'])} payout tables")
 
 
 if __name__ == "__main__":

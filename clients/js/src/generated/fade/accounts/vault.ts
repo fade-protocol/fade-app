@@ -38,7 +38,41 @@ volumeTotal: bigint; integrators: bigint;
  * what the vault gained (`vault_credit − payout`) and lost on them. A strike
  * leaves them out of its price; they are the next epoch's (Spec 08 §4 rule 5).
  */
-afterCloseGain: bigint; afterCloseLoss: bigint; reserved: ReadonlyUint8Array;  };
+afterCloseGain: bigint; afterCloseLoss: bigint; 
+/** Id of the round accepting tickets, or 0. */
+acceptingRound: bigint; 
+/** Id the next round created receives; starts at 1. */
+nextRoundId: bigint; 
+/**
+ * Protocol and app shares of beacon tickets joined and not yet settled,
+ * returned or forfeited: in `vault_usdc`, outside `total_assets`.
+ */
+beaconSharesHeld: bigint; 
+/** Protocol shares of settled and forfeited beacon tickets, not yet claimed. */
+protocolSharesAccrued: bigint; 
+/** `Σ Integrator.app_shares_accrued`. */
+appSharesOwed: bigint; 
+/** Ticket prices of refunded rounds' tickets not yet returned. */
+beaconReturnsOwed: bigint; 
+/** Rounds `expire_round` has forfeited, ever. */
+roundsForfeited: bigint; 
+/**
+ * The expiries a withheld draw may explain: every forfeiture but one of
+ * a round never requested whose request the program looked for and did
+ * not find (`RoundExpired`'s `!requested && checked && !request_found`,
+ * the keepers' failure), and every round `expire_round` refunded because
+ * its entropy was never recorded and SlotHashes no longer proves it
+ * (`RoundExpired.refunded`). A durable count, so that an alarm never has
+ * to infer a withheld draw from transaction history it could not read.
+ */
+forfeitsWithheld: bigint; 
+/**
+ * The direct expiries a withheld draw may explain, by the same rule as
+ * `forfeits_withheld` (`TicketExpired`'s `requested || request_found ||
+ * !checked`, every refund included), kept apart so that each path's
+ * alarm accounts for its own ordinals. Taken from the reserved tail.
+ */
+ticketForfeitsWithheld: bigint; reserved: ReadonlyUint8Array;  };
 
 export type VaultArgs = { version: number; bump: number; 
 /** Everything the vault owns, tracked internally — never read from a token account. */
@@ -66,16 +100,50 @@ volumeTotal: number | bigint; integrators: number | bigint;
  * what the vault gained (`vault_credit − payout`) and lost on them. A strike
  * leaves them out of its price; they are the next epoch's (Spec 08 §4 rule 5).
  */
-afterCloseGain: number | bigint; afterCloseLoss: number | bigint; reserved: ReadonlyUint8Array;  };
+afterCloseGain: number | bigint; afterCloseLoss: number | bigint; 
+/** Id of the round accepting tickets, or 0. */
+acceptingRound: number | bigint; 
+/** Id the next round created receives; starts at 1. */
+nextRoundId: number | bigint; 
+/**
+ * Protocol and app shares of beacon tickets joined and not yet settled,
+ * returned or forfeited: in `vault_usdc`, outside `total_assets`.
+ */
+beaconSharesHeld: number | bigint; 
+/** Protocol shares of settled and forfeited beacon tickets, not yet claimed. */
+protocolSharesAccrued: number | bigint; 
+/** `Σ Integrator.app_shares_accrued`. */
+appSharesOwed: number | bigint; 
+/** Ticket prices of refunded rounds' tickets not yet returned. */
+beaconReturnsOwed: number | bigint; 
+/** Rounds `expire_round` has forfeited, ever. */
+roundsForfeited: number | bigint; 
+/**
+ * The expiries a withheld draw may explain: every forfeiture but one of
+ * a round never requested whose request the program looked for and did
+ * not find (`RoundExpired`'s `!requested && checked && !request_found`,
+ * the keepers' failure), and every round `expire_round` refunded because
+ * its entropy was never recorded and SlotHashes no longer proves it
+ * (`RoundExpired.refunded`). A durable count, so that an alarm never has
+ * to infer a withheld draw from transaction history it could not read.
+ */
+forfeitsWithheld: number | bigint; 
+/**
+ * The direct expiries a withheld draw may explain, by the same rule as
+ * `forfeits_withheld` (`TicketExpired`'s `requested || request_found ||
+ * !checked`, every refund included), kept apart so that each path's
+ * alarm accounts for its own ordinals. Taken from the reserved tail.
+ */
+ticketForfeitsWithheld: number | bigint; reserved: ReadonlyUint8Array;  };
 
 /** Gets the encoder for {@link VaultArgs} account data. */
 export function getVaultEncoder(): FixedSizeEncoder<VaultArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['version', getU8Encoder()], ['bump', getU8Encoder()], ['totalAssets', getU64Encoder()], ['totalShares', getU64Encoder()], ['totalReservedLiability', getU64Encoder()], ['openVaultCredits', getU64Encoder()], ['openBeforeClose', getU32Encoder()], ['openAfterClose', getU32Encoder()], ['generation', getU32Encoder()], ['closeTs', getI64Encoder()], ['priceMaxima', getArrayEncoder(getU128Encoder(), { size: 24 })], ['priceHeadHour', getI64Encoder()], ['drawdownTripTs', getI64Encoder()], ['volumeTotal', getU64Encoder()], ['integrators', getU64Encoder()], ['afterCloseGain', getU64Encoder()], ['afterCloseLoss', getU64Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 112)]]), (value) => ({ ...value, discriminator: VAULT_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['version', getU8Encoder()], ['bump', getU8Encoder()], ['totalAssets', getU64Encoder()], ['totalShares', getU64Encoder()], ['totalReservedLiability', getU64Encoder()], ['openVaultCredits', getU64Encoder()], ['openBeforeClose', getU32Encoder()], ['openAfterClose', getU32Encoder()], ['generation', getU32Encoder()], ['closeTs', getI64Encoder()], ['priceMaxima', getArrayEncoder(getU128Encoder(), { size: 24 })], ['priceHeadHour', getI64Encoder()], ['drawdownTripTs', getI64Encoder()], ['volumeTotal', getU64Encoder()], ['integrators', getU64Encoder()], ['afterCloseGain', getU64Encoder()], ['afterCloseLoss', getU64Encoder()], ['acceptingRound', getU64Encoder()], ['nextRoundId', getU64Encoder()], ['beaconSharesHeld', getU64Encoder()], ['protocolSharesAccrued', getU64Encoder()], ['appSharesOwed', getU64Encoder()], ['beaconReturnsOwed', getU64Encoder()], ['roundsForfeited', getU64Encoder()], ['forfeitsWithheld', getU64Encoder()], ['ticketForfeitsWithheld', getU64Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 40)]]), (value) => ({ ...value, discriminator: VAULT_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Vault} account data. */
 export function getVaultDecoder(): FixedSizeDecoder<Vault> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['version', getU8Decoder()], ['bump', getU8Decoder()], ['totalAssets', getU64Decoder()], ['totalShares', getU64Decoder()], ['totalReservedLiability', getU64Decoder()], ['openVaultCredits', getU64Decoder()], ['openBeforeClose', getU32Decoder()], ['openAfterClose', getU32Decoder()], ['generation', getU32Decoder()], ['closeTs', getI64Decoder()], ['priceMaxima', getArrayDecoder(getU128Decoder(), { size: 24 })], ['priceHeadHour', getI64Decoder()], ['drawdownTripTs', getI64Decoder()], ['volumeTotal', getU64Decoder()], ['integrators', getU64Decoder()], ['afterCloseGain', getU64Decoder()], ['afterCloseLoss', getU64Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 112)]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['version', getU8Decoder()], ['bump', getU8Decoder()], ['totalAssets', getU64Decoder()], ['totalShares', getU64Decoder()], ['totalReservedLiability', getU64Decoder()], ['openVaultCredits', getU64Decoder()], ['openBeforeClose', getU32Decoder()], ['openAfterClose', getU32Decoder()], ['generation', getU32Decoder()], ['closeTs', getI64Decoder()], ['priceMaxima', getArrayDecoder(getU128Decoder(), { size: 24 })], ['priceHeadHour', getI64Decoder()], ['drawdownTripTs', getI64Decoder()], ['volumeTotal', getU64Decoder()], ['integrators', getU64Decoder()], ['afterCloseGain', getU64Decoder()], ['afterCloseLoss', getU64Decoder()], ['acceptingRound', getU64Decoder()], ['nextRoundId', getU64Decoder()], ['beaconSharesHeld', getU64Decoder()], ['protocolSharesAccrued', getU64Decoder()], ['appSharesOwed', getU64Decoder()], ['beaconReturnsOwed', getU64Decoder()], ['roundsForfeited', getU64Decoder()], ['forfeitsWithheld', getU64Decoder()], ['ticketForfeitsWithheld', getU64Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 40)]]);
 }
 
 /** Gets the codec for {@link Vault} account data. */

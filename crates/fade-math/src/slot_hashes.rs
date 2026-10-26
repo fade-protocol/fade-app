@@ -67,6 +67,17 @@ pub fn first_after(data: &[u8], t: u64) -> Option<Entry> {
     (found.slot > t).then_some(found)
 }
 
+/// `first_after(t)`, but only when the sysvar still proves it is the first
+/// slot produced after `t`: either an entry at or before `t` is retained, or
+/// the entry found is `t + 1` itself. Once every entry up to `t` has left the
+/// sysvar, an older slot after `t` may have been evicted rather than skipped,
+/// and the oldest one retained would be the wrong slot: `None`.
+pub fn first_after_retained(data: &[u8], t: u64) -> Option<Entry> {
+    let found = first_after(data, t)?;
+    let oldest = entry(data, len(data)?.checked_sub(1)?)?;
+    (oldest.slot <= t || Some(found.slot) == t.checked_add(1)).then_some(found)
+}
+
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 pub(crate) mod tests {
@@ -93,6 +104,22 @@ pub(crate) mod tests {
         assert_eq!(first_after(&d, 110), None);
         assert_eq!(first_after(&d, 200), None);
         assert_eq!(latest(&d).unwrap().slot, 110);
+    }
+
+    #[test]
+    fn first_after_retained_needs_the_boundary() {
+        let d = build(&[110, 109, 107, 106, 100]);
+        // The boundary retained: as `first_after`.
+        assert_eq!(first_after_retained(&d, 100).unwrap().slot, 106);
+        assert_eq!(first_after_retained(&d, 107).unwrap().slot, 109);
+        assert_eq!(first_after_retained(&d, 110), None);
+        // Nothing at or before 99 retained, but 100 is 99 + 1.
+        assert_eq!(first_after_retained(&d, 99).unwrap().slot, 100);
+        // Nothing at or before 97 retained, and 98 or 99 may have been
+        // evicted rather than skipped: unknown.
+        assert_eq!(first_after(&d, 97).unwrap().slot, 100);
+        assert_eq!(first_after_retained(&d, 97), None);
+        assert_eq!(first_after_retained(&build(&[]), 1), None);
     }
 
     #[test]

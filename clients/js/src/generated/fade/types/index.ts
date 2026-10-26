@@ -10,4 +10,6 @@ export * from './liveEpoch';
 export * from './outcome';
 export * from './pendingChange';
 export * from './riskParams';
+export * from './roundStatus';
+export * from './roundTicketStatus';
 export * from './ticketStatus';

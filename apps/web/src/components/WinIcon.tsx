@@ -9,6 +9,8 @@ const paths: Record<TicketKind, string> = {
   Swap: "M2.5 5h9m0 0-2.5-2.5M11.5 5 9 7.5M13.5 11h-9m0 0L7 8.5M4.5 11 7 13.5",
   // a pack with a star
   Booster: "M3.5 1.5h9v13h-9zM8 5.2l.9 1.8 2 .3-1.45 1.4.35 2L8 9.75l-1.8.95.35-2L5.1 7.3l2-.3z",
+  // a ticket stub, notched on both sides
+  "Small ticket": "M2.5 4.5h11v2a1.5 1.5 0 0 0 0 3v2h-11v-2a1.5 1.5 0 0 0 0-3z",
   // a spark
   Ticket:
     "M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M3.4 12.6l2.1-2.1M10.5 5.5l2.1-2.1",

@@ -6,7 +6,17 @@
 //
 //   pnpm devnet:params show
 //   MIN_PRICE_USDC=0.10 pnpm devnet:params propose  (council = keys/deployer.json)
+//
+// `propose` names the live treasury, so that it stays where it is (a change applied at once
+// writes the parameters and the treasury together), and refuses while a change is pending,
+// which it would replace, unless REPLACE_PENDING=1.
 //   pnpm devnet:params apply
+//
+// The beacon's terms, on the same program: e.g. Spec 09 §8's terms for a
+// 0.10 USD minimum ticket, as the app's small-ticket demo needs them,
+//
+//   BEACON_MIN_PRICE_USDC=0.10 BEACON_THRESHOLD_USDC=9.79 \
+//     ROUND_SETTLE_LAMPORTS=5000 pnpm devnet:params propose
 import {
   fetchConfig,
   getApplyParamsInstructionAsync,
@@ -24,10 +34,22 @@ function parseUsdc(v: string): bigint {
   return BigInt(m[1] ?? "0") * USDC + BigInt((m[2] ?? "").padEnd(6, "0"));
 }
 
+/** The beacon's overrides. */
+const BEACON_VARS = ["BEACON_MIN_PRICE_USDC", "BEACON_THRESHOLD_USDC", "ROUND_SETTLE_LAMPORTS"];
+
 function overrides(p: RiskParams): RiskParams {
   const next = { ...p };
   const minPrice = process.env["MIN_PRICE_USDC"];
   if (minPrice) next.minPrice = parseUsdc(minPrice);
+  const beaconMin = process.env["BEACON_MIN_PRICE_USDC"];
+  if (beaconMin) next.beaconMinPrice = parseUsdc(beaconMin);
+  const threshold = process.env["BEACON_THRESHOLD_USDC"];
+  if (threshold) next.beaconThreshold = parseUsdc(threshold);
+  const settle = process.env["ROUND_SETTLE_LAMPORTS"];
+  if (settle) {
+    if (!/^\d+$/.test(settle)) throw new Error(`not a lamport amount: ${settle}`);
+    next.crankRoundSettleLamports = BigInt(settle);
+  }
   return next;
 }
 
@@ -35,6 +57,11 @@ function describe(label: string, p: RiskParams) {
   console.log(
     `${label}: min price ${fmtUsdc(p.minPrice)}, max price ${fmtUsdc(p.maxPrice)}, ` +
       `epoch ${p.epochLengthSeconds} s, T_SETTLE ${p.tSettleSlots} slots`,
+  );
+  console.log(
+    `${label}, beacon: min price ${fmtUsdc(p.beaconMinPrice)}, threshold ` +
+      `${fmtUsdc(p.beaconThreshold)}, settlement share ${p.crankRoundSettleLamports} lamports, ` +
+      `tick ${p.tickSlots} slots`,
   );
 }
 
@@ -51,11 +78,19 @@ async function main() {
   const common = { eventAuthority: pdas.eventAuthority, program: PROGRAM };
 
   if (mode === "propose") {
+    // The devnet build applies a change at once, the treasury it names with the parameters,
+    // and a pending change is replaced by it: land that one first if it is still wanted.
+    if (c.pending.active && process.env["REPLACE_PENDING"] !== "1")
+      throw new Error(
+        "a change is pending: run `pnpm devnet:params apply` first, or set REPLACE_PENDING=1 to replace it",
+      );
     const council = await loadDeployer();
     const params = overrides(c.params);
     const json = (p: RiskParams) =>
       JSON.stringify(p, (_, v: unknown) => (typeof v === "bigint" ? v.toString() : v));
-    if (json(params) === json(c.params)) throw new Error("nothing to change: set MIN_PRICE_USDC");
+    if (json(params) === json(c.params))
+      throw new Error(`nothing to change: set MIN_PRICE_USDC or ${BEACON_VARS.join(", ")}`);
+    // The live treasury: a change applied at once writes the treasury it names.
     const ix = await getSetParamsInstructionAsync(
       { council, protocolTreasury: c.protocolTreasury, params, ...common },
       cfg,

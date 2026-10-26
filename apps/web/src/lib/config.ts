@@ -1,8 +1,9 @@
 // The devnet deployment the app talks to. The generated client defaults to the
 // mainnet program id and mint: everything here passes the devnet ones.
 import { address } from "@solana/kit";
+import { parseBeaconEnabled } from "./beaconConfig";
 
-type Env = { VITE_RPC_URL?: string; VITE_API_URL?: string };
+type Env = { VITE_RPC_URL?: string; VITE_API_URL?: string; VITE_BEACON_ENABLED?: string };
 const env: Env = (import.meta as { env?: Env }).env ?? {};
 const nodeEnv: Env = (globalThis as { process?: { env?: Env } }).process?.env ?? ({} as Env);
 
@@ -27,6 +28,17 @@ const DEFAULT_RPC = KEEPER_RPC;
 export const RPC_URL = env.VITE_RPC_URL || nodeEnv.VITE_RPC_URL || DEFAULT_RPC;
 
 export const PROGRAM = address("GqWqMEubSHgrqJCZ9zPfMHq6uQPZkr6EbiBy78j7engt");
+/**
+ * The program the small-ticket demo joins the shared beacon's rounds on:
+ * PROGRAM, which carries both the direct path and the beacon; null (the demo
+ * hidden) unless `VITE_BEACON_ENABLED` is "true" or "1", so a build without
+ * it is the app as it was.
+ */
+export const BEACON_PROGRAM = parseBeaconEnabled(
+  env.VITE_BEACON_ENABLED || nodeEnv.VITE_BEACON_ENABLED,
+)
+  ? PROGRAM
+  : null;
 export const USDC_MINT = address("E4XYMYALrvMX19P6TxqKXe8ZYGxfj2CjMub6c2ZficTv");
 export const USDC_DECIMALS = 6;
 export const SHARE_DECIMALS = 9;

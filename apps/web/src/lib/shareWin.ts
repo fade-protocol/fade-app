@@ -138,6 +138,16 @@ export function cardCopy(w: ShareWin): CardCopy {
       detail: `Bought a ${pack} USDC pack, added ${usdc(w.price)}, pulled ${premium ? "the premium" : "a second pack"}.${oddsSentence(w)}`,
     };
   }
+  if (w.kind === "Small ticket")
+    return {
+      lead: null,
+      headline: "My small ticket won.",
+      bigWord: false,
+      amount,
+      unit: "USDC",
+      accent: "mint",
+      detail: `${ticket} ticket, one shared draw.${oddsSentence(w)}`,
+    };
   return {
     lead: null,
     headline: "My ticket came back.",

@@ -5,12 +5,12 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{Mint, Token, TokenAccount};
-use fade_math::orao_layout;
-use fade_math::{payout_table, risk, BPS};
+use fade_math::{orao_layout, payout_table};
 
 use crate::constants::*;
 use crate::errors::{FadeError, OrFade};
 use crate::events::{IntegratorCreated, TicketOpened};
+use crate::instructions::admission::{self, Margin};
 use crate::instructions::common::{is_usdc_account, user_transfer};
 use crate::state::{Config, Integrator, Outcome, Ticket, TicketStatus, Vault};
 
@@ -106,11 +106,13 @@ pub fn open_ticket_handler(
                 !config.is_paused(Config::PAUSE_NEW_INTEGRATORS),
                 FadeError::Paused
             );
-            integrator.version = ACCOUNT_VERSION;
-            integrator.bump = ctx.bumps.integrator;
-            integrator.authority = ctx.accounts.integrator_authority.key();
-            integrator.share_account = ctx.accounts.share_account.key();
-            integrator.created_at = now;
+            admission::enrol(
+                integrator,
+                ctx.accounts.integrator_authority.key(),
+                ctx.accounts.share_account.key(),
+                ctx.bumps.integrator,
+                now,
+            );
         }
         require!(!integrator.paused, FadeError::IntegratorPaused);
         require!(
@@ -131,68 +133,33 @@ pub fn open_ticket_handler(
         .map(|b| payout_table::Outcome { p: b.p, m: b.m })
         .collect();
     let summary = payout_table::validate(&outcomes).or_fade()?;
-    let margin = payout_table::margin_bps(summary.lhs).ok_or(FadeError::PayoutTableOverpays)?;
-    let vault_margin = risk::check_split(margin, app_share_bps, &math).or_fade()?;
-    // The invariant itself, exactly: Σ p·m ≤ (1 − floor − shares) in u128.
-    let floor = params
-        .min_vault_margin_bps
-        .checked_add(params.protocol_share_bps)
-        .and_then(|v| v.checked_add(app_share_bps))
-        .ok_or(FadeError::MathOverflow)?;
-    require!(floor <= BPS, FadeError::MarginFloor);
-    require!(
-        payout_table::ev_ok(summary.lhs, floor),
-        FadeError::MarginFloor
-    );
+    let Margin {
+        margin_bps: margin,
+        vault_margin_bps: vault_margin,
+    } = admission::check_margin(summary.lhs, app_share_bps, &params)?;
 
     // --- is the vault still healthy ------------------------------------------------
-    let vault = &mut ctx.accounts.vault;
-    // Opening moves no settled asset: the credit is both owned and at risk.
-    let share_price = vault.settled_price().or_fade()?;
-    let mut ring = vault.ring();
-    ring.observe(now, share_price, share_price);
-    require!(
-        !ring.tripped(share_price, params.drawdown_bps),
-        FadeError::DrawdownBreaker
-    );
-    let halved = vault.drawdown_trip_ts != 0
-        && now
-            < vault
-                .drawdown_trip_ts
-                .checked_add(DRAWDOWN_AFTERMATH_SECONDS)
-                .ok_or(FadeError::MathOverflow)?;
+    let gate = admission::drawdown_gate(&ctx.accounts.vault, params.drawdown_bps, now)?;
 
     // --- is the ticket sized right -------------------------------------------------
-    let w = risk::ticket_for(price, summary.max_m, app_share_bps, &math).or_fade()?;
-    let integrator_math = risk::Integrator {
-        reserved: ctx.accounts.integrator.reserved_liability,
-        volume_total: ctx.accounts.integrator.volume_total,
-    };
-    let admission = risk::admit(
-        &vault.math(),
-        &integrator_math,
+    let (w, admission) = admission::admit(
+        &ctx.accounts.vault,
+        &ctx.accounts.integrator,
         &math,
-        &w,
+        price,
+        summary.max_m,
+        app_share_bps,
         vault_margin,
-        halved,
-    )
-    .or_fade()?;
+        gate.halved,
+    )?;
 
     // --- the oracle's price, read from ORAO, never from Fade's admin ------------------
-    let network = &ctx.accounts.orao_network_state;
-    require_keys_eq!(
-        *network.owner,
-        ORAO_VRF_ID,
-        FadeError::NetworkStateUnreadable
-    );
-    let state = orao_layout::network_state(&network.try_borrow_data()?)
-        .ok_or(FadeError::NetworkStateUnreadable)?;
-    let request_rent = Rent::get()?.minimum_balance(orao_layout::PENDING_LEN);
+    let request_fee = admission::orao_fee(&ctx.accounts.orao_network_state)?;
+    let request_rent = admission::pending_request_rent()?;
     // Twice the fee: ORAO's fee could rise between the open and the request,
     // and a request that cannot pay would leave the ticket to be forfeited.
     // Whatever is not spent goes back to the payer at close.
-    let prefund = state
-        .request_fee
+    let prefund = request_fee
         .checked_mul(2)
         .and_then(|v| v.checked_add(request_rent))
         .ok_or(FadeError::MathOverflow)?;
@@ -246,32 +213,13 @@ pub fn open_ticket_handler(
     }
 
     // --- the books ------------------------------------------------------------------
-    let after = admission.vault_after;
-    vault.total_assets = after.assets;
-    vault.total_reserved_liability = after.reserved;
-    vault.open_vault_credits = after.open_credits;
+    let vault = &mut ctx.accounts.vault;
+    let integrator = &mut ctx.accounts.integrator;
+    admission::book(vault, integrator, &admission, &gate.ring, created)?;
     vault.volume_total = vault.volume_total.saturating_add(price);
     let mut counters = vault.counters();
     let (side, generation) = counters.open(now).or_fade()?;
     vault.set_counters(&counters);
-    vault.set_ring(&ring);
-    if created {
-        vault.integrators = vault.integrators.saturating_add(1);
-    }
-
-    let integrator = &mut ctx.accounts.integrator;
-    integrator.reserved_liability = integrator
-        .reserved_liability
-        .checked_add(admission.liability)
-        .ok_or(FadeError::MathOverflow)?;
-    integrator.open_tickets = integrator
-        .open_tickets
-        .checked_add(1)
-        .ok_or(FadeError::MathOverflow)?;
-    integrator.next_nonce = integrator
-        .next_nonce
-        .checked_add(1)
-        .ok_or(FadeError::MathOverflow)?;
     integrator.volume_total = integrator.volume_total.saturating_add(price);
 
     let ticket = &mut ctx.accounts.ticket;

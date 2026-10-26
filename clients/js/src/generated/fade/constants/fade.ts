@@ -8,6 +8,10 @@
 
 import type { ReadonlyUint8Array } from '@solana/kit';
 
+export const BEACON_OUTCOME_TAG: ReadonlyUint8Array = new Uint8Array([70, 65, 68, 69, 47, 66, 69, 65, 67, 79, 78, 45, 79, 85, 84, 67, 79, 77, 69, 47, 118, 49]);
+
+export const BEACON_SEED_TAG: ReadonlyUint8Array = new Uint8Array([70, 65, 68, 69, 47, 66, 69, 65, 67, 79, 78, 45, 83, 69, 69, 68, 47, 118, 49]);
+
 export const CONFIG_SEED: ReadonlyUint8Array = new Uint8Array([99, 111, 110, 102, 105, 103]);
 
 export const DEPOSIT_QUEUE_SEED: ReadonlyUint8Array = new Uint8Array([100, 101, 112, 111, 115, 105, 116, 45, 113, 117, 101, 117, 101]);
@@ -20,17 +24,35 @@ export const INTEGRATOR_AUTHORITY_SEED: ReadonlyUint8Array = new Uint8Array([102
 
 export const INTEGRATOR_SEED: ReadonlyUint8Array = new Uint8Array([105, 110, 116, 101, 103, 114, 97, 116, 111, 114]);
 
+export const MAX_ROUND_BATCH: number = 32;
+
+export const MAX_ROUND_K: number = 1;
+
 export const PAYABLE_SEED: ReadonlyUint8Array = new Uint8Array([112, 97, 121, 97, 98, 108, 101]);
 
 export const PAYOUT_ESCROW_SEED: ReadonlyUint8Array = new Uint8Array([112, 97, 121, 111, 117, 116, 45, 101, 115, 99, 114, 111, 119]);
 
+export const PAYOUT_TABLE_SEED: ReadonlyUint8Array = new Uint8Array([112, 97, 121, 111, 117, 116, 45, 116, 97, 98, 108, 101]);
+
+export const PAYOUT_TABLE_TAG: ReadonlyUint8Array = new Uint8Array([70, 65, 68, 69, 47, 80, 65, 89, 79, 85, 84, 45, 84, 65, 66, 76, 69, 47, 118, 49]);
+
 export const QUEUE_SEED: ReadonlyUint8Array = new Uint8Array([113, 117, 101, 117, 101]);
+
+export const REFUND_OUTCOME: number = 255;
+
+export const ROUND_SEED: ReadonlyUint8Array = new Uint8Array([114, 111, 117, 110, 100]);
+
+export const ROUND_TICKET_SEED: ReadonlyUint8Array = new Uint8Array([114, 111, 117, 110, 100, 45, 116, 105, 99, 107, 101, 116]);
+
+export const ROUND_VRF_SEED: ReadonlyUint8Array = new Uint8Array([114, 111, 117, 110, 100, 45, 118, 114, 102]);
 
 export const SHARE_CLAIMS_SEED: ReadonlyUint8Array = new Uint8Array([115, 104, 97, 114, 101, 45, 99, 108, 97, 105, 109, 115]);
 
 export const SHARE_ESCROW_SEED: ReadonlyUint8Array = new Uint8Array([115, 104, 97, 114, 101, 45, 101, 115, 99, 114, 111, 119]);
 
 export const SHARE_MINT_SEED: ReadonlyUint8Array = new Uint8Array([115, 104, 97, 114, 101, 115]);
+
+export const SPONSORSHIP_SEED: ReadonlyUint8Array = new Uint8Array([115, 112, 111, 110, 115, 111, 114, 115, 104, 105, 112]);
 
 export const TICKET_SEED: ReadonlyUint8Array = new Uint8Array([116, 105, 99, 107, 101, 116]);
 

@@ -5555,6 +5555,10 @@ h3.label-tip .tip-wrap {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
+/* a fourth demo, the small ticket, when the app is built with a beacon program */
+.thumb-tabs.has-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
 .thumb-tab {
   display: flex;
   align-items: center;
@@ -7244,5 +7248,65 @@ a.erow-time:hover {
   }
   .draw-facts div:last-child {
     grid-column: 1 / -1;
+  }
+}
+
+/* The small-ticket demo (demos/BeaconDemo.tsx): the ticket, the tick its draw closes on. */
+.beacon-visual {
+  align-content: center;
+  min-height: 260px;
+}
+.beacon-ticket {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 22px 16px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  text-align: center;
+}
+.beacon-ticket[data-state="following"] {
+  border-color: var(--violet);
+}
+.beacon-ticket[data-state="done"] {
+  border-style: solid;
+}
+.beacon-ticket-price {
+  font-size: 34px;
+  font-weight: 600;
+  color: var(--text);
+}
+.beacon-tick {
+  display: grid;
+  gap: 8px;
+}
+.beacon-tick-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+}
+.beacon-tick-big {
+  font-size: 24px;
+  color: var(--violet-3);
+}
+.beacon-tick-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.beacon-tick-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--violet-deep), var(--violet-2));
+  transition: width 0.45s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .beacon-tick-bar > span {
+    transition: none;
   }
 }

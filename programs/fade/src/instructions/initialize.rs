@@ -67,14 +67,18 @@ pub fn initialize_handler(
     let now = Clock::get()?.unix_timestamp;
 
     let config = &mut ctx.accounts.config;
-    config.version = ACCOUNT_VERSION;
+    config.version = CONFIG_VERSION;
     config.bump = ctx.bumps.config;
     config.vault_authority_bump = ctx.bumps.vault_authority;
     config.council = council;
     config.guardian = guardian;
     config.protocol_treasury = ctx.accounts.protocol_treasury.key();
     config.usdc_mint = ctx.accounts.usdc_mint.key();
-    config.pause_flags = 0;
+    // The beacon starts paused: only the council turns it on (Spec 08 §13.7),
+    // once the deployed binary carries every instruction that ends a round
+    // (refund, request, settlement, expiry, returns, reclaims and claims).
+    // Before that, a join would lock its funds and the vault's reservation.
+    config.pause_flags = Config::PAUSE_ROUNDS;
     config.params = params;
     config.pending = PendingChange {
         active: false,
@@ -86,6 +90,8 @@ pub fn initialize_handler(
     let vault = &mut ctx.accounts.vault;
     vault.version = ACCOUNT_VERSION;
     vault.bump = ctx.bumps.vault;
+    // Round ids start at 1: `accepting_round == 0` means no round accepts tickets.
+    vault.next_round_id = 1;
     vault.set_ring(&Ring::new(now, share_price(0, 0).or_fade()?));
 
     let queue = &mut ctx.accounts.queue;

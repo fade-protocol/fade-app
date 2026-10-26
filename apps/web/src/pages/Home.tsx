@@ -1,8 +1,17 @@
 // Home: the three demos as thumbnail tabs, the live stage under them, the wallet's last tickets,
 // and on the right the wallet, the live draws and a way into the vault. The hash names the tab
-// (/#checkout, /#swap, /#booster) and never scrolls; any other hash lands on the first one.
+// (/#checkout, /#swap, /#booster, and /#beacon when the app is built with a beacon program) and
+// never scrolls; any other hash lands on the first one.
 import type { Address } from "@solana/kit";
-import { useEffect, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { DevSimPanel } from "../demos/devSimulation";
 import {
   AnimatedHeight,
@@ -19,26 +28,40 @@ import { CheckoutDemo } from "../demos/CheckoutDemo";
 import { useWalletFunds, type Live, type WalletFunds } from "../demos/common";
 import { BoosterDemo } from "../demos/BoosterDemo";
 import { SwapDemo } from "../demos/SwapDemo";
+import { BEACON_PROGRAM } from "../lib/config";
+import { demoTabs, tabOf as tabIn, type Tab } from "../lib/demoTabs";
 import { ago, clock, sol, usdc } from "../lib/format";
-import { useNow, useProgramTickets, useProtocol, useStats, useWalletTickets } from "../lib/hooks";
+import {
+  useKeeperFeed,
+  useNow,
+  useProgramTicketsWhen,
+  useProtocol,
+  useStats,
+  useWalletTickets,
+} from "../lib/hooks";
+import { chooseView, needsOwn } from "../lib/keeperViews";
 import type { Stats } from "../lib/stats";
-import { fmtApr, kindOf, type TicketKind, type TicketLog } from "../lib/ticketLog";
-import { NOT_THIS_TIME, winWords } from "../lib/ticketWords";
+import {
+  APR_LABEL,
+  fmtApr,
+  kindOf,
+  type LoneEnd,
+  type TicketKind,
+  type TicketRow,
+} from "../lib/ticketLog";
+import { NOT_THIS_TIME, noDrawWords, winWords } from "../lib/ticketWords";
 import { Link, replaceHash, useHash } from "../router";
 import { ConnectButton } from "../wallet/ConnectButton";
 import { useWallet } from "../wallet/WalletProvider";
 import { useApr } from "./vault/Apr";
 import { useOwner } from "./vault/useVaultData";
 
-type Tab = "checkout" | "swap" | "booster";
+const TABS = demoTabs(BEACON_PROGRAM !== null);
 
-const TABS: { id: Tab; title: string; sub: string }[] = [
-  { id: "checkout", title: "Checkout", sub: "The receipt prints" },
-  { id: "swap", title: "Swap", sub: "In the wallet" },
-  { id: "booster", title: "Booster", sub: "Pack, maybe a premium" },
-];
-
-const tabOf = (hash: string): Tab => (TABS.some((t) => t.id === hash) ? (hash as Tab) : "checkout");
+/** The small-ticket demo, loaded only by a build with a beacon program: others never fetch it. */
+const BeaconDemo = BEACON_PROGRAM
+  ? lazy(() => import("../demos/BeaconDemo").then((m) => ({ default: m.BeaconDemo })))
+  : null;
 
 /** Small drawings of each demo's scene, for the tabs: the scenes themselves stay live below. */
 const THUMBS: Record<Tab, ReactNode> = {
@@ -82,6 +105,17 @@ const THUMBS: Record<Tab, ReactNode> = {
       <circle cx="26" cy="31.5" r="2.2" fill="#6fe3b4" />
     </svg>
   ),
+  beacon: (
+    <svg viewBox="0 0 64 48" aria-hidden="true">
+      <rect width="64" height="48" fill="#141024" />
+      <path d="M8 34h48" stroke="#3a2d78" strokeWidth="2" />
+      <path d="M12 30v8M24 30v8M36 30v8M48 30v8" stroke="#7c5cff" strokeWidth="1.6" />
+      <rect x="14" y="10" width="11" height="14" rx="2" fill="#3a2d78" />
+      <rect x="27" y="8" width="11" height="16" rx="2" fill="#7c5cff" />
+      <rect x="40" y="12" width="10" height="12" rx="2" fill="#3a2d78" />
+      <circle cx="48" cy="34" r="3" fill="#6fe3b4" />
+    </svg>
+  ),
   booster: (
     <svg viewBox="0 0 64 48" aria-hidden="true">
       <rect width="64" height="48" fill="#1a1430" />
@@ -115,7 +149,11 @@ function DemoTabs({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
     refs.current[j]?.focus();
   };
   return (
-    <div className="thumb-tabs" role="tablist" aria-label="Demos">
+    <div
+      className={`thumb-tabs${TABS.length === 4 ? " has-4" : ""}`}
+      role="tablist"
+      aria-label="Demos"
+    >
       {TABS.map((t, i) => (
         <button
           key={t.id}
@@ -143,8 +181,10 @@ function DemoTabs({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
   );
 }
 
-const resultOf = (payout: bigint, expired: boolean) =>
-  expired ? "no draw" : payout > 0n ? `+${usdc(payout)}` : NOT_THIS_TIME;
+const resultOf = (
+  payout: bigint,
+  end: { kind: "settled" | "expired"; refunded?: boolean; creditReturned?: boolean },
+) => (end.kind === "expired" ? noDrawWords(end) : payout > 0n ? `+${usdc(payout)}` : NOT_THIS_TIME);
 
 /** The wallet's last three tickets, under the stage. */
 function LastTickets({ owner }: { owner: Address }) {
@@ -160,13 +200,13 @@ function LastTickets({ owner }: { owner: Address }) {
         const payout = r.end?.payout ?? 0n;
         return (
           <span key={r.ticket} className="last-ticket">
-            {r.end && payout > 0n ? (
+            {r.end?.kind === "settled" && payout > 0n ? (
               <>
                 <span className="up strong mono">+{usdc(payout)}</span> {kind}
               </>
             ) : (
               <>
-                {kind} <span>{r.end ? resultOf(0n, r.end.kind === "expired") : "drawing"}</span>
+                {kind} <span>{r.end ? resultOf(0n, r.end) : "drawing"}</span>
               </>
             )}
             <span className="muted">{ago(r.openedAt)}</span>
@@ -233,7 +273,13 @@ type Draw = {
   price: bigint | null;
   /** null while the draw is pending. */
   payout: bigint | null;
+  /**
+   * Closed without a draw; `refunded` when a beacon round gave the price back, `creditReturned`
+   * when a direct ticket got its vault credit back (its payout, never a win).
+   */
   expired: boolean;
+  refunded: boolean;
+  creditReturned: boolean;
 };
 
 /** A compact age for a live list: "now", "42 s", "6 min", "3 h", "2 d". */
@@ -246,7 +292,21 @@ function since(seconds: number): string {
   return `${Math.floor(d / 86400)} d`;
 }
 
-function LiveDraws({ log, stats }: { log: TicketLog | null; stats: Stats | null }) {
+/**
+ * What the live draws read: the keeper's feed (lib/keeperViews), or the program's tickets the
+ * app read itself when the keeper cannot serve it.
+ */
+type DrawsLog = {
+  rows: readonly (Pick<TicketRow, "ticket" | "price" | "payoutMax" | "openedAt" | "end"> & {
+    beacon?: unknown;
+  })[];
+  loneEnds: readonly Pick<
+    LoneEnd,
+    "ticket" | "kind" | "payout" | "at" | "refunded" | "creditReturned" | "beacon"
+  >[];
+};
+
+function LiveDraws({ log, stats }: { log: DrawsLog | null; stats: Stats | null }) {
   const now = useNow();
   const draws = useMemo((): Draw[] | null => {
     if (!log) return null;
@@ -262,15 +322,20 @@ function LiveDraws({ log, stats }: { log: TicketLog | null; stats: Stats | null 
           price: r.price,
           payout: r.end ? r.end.payout : null,
           expired: r.end?.kind === "expired",
+          refunded: r.end?.refunded === true,
+          creditReturned: r.end?.creditReturned === true,
         })),
       ...log.loneEnds.map((e) => ({
         key: e.ticket,
         state: `${e.ticket}:${e.kind}`,
         at: e.at ?? 0,
-        kind: "Ticket" as const,
+        // a beacon ticket is the beacon demo's small ticket (kindOf), whatever its join
+        kind: e.beacon ? ("Small ticket" as const) : ("Ticket" as const),
         price: null,
         payout: e.payout,
         expired: e.kind === "expired",
+        refunded: e.refunded === true,
+        creditReturned: e.creditReturned === true,
       })),
     ];
     return all.sort((a, b) => b.at - a.at).slice(0, DRAWS_SHOWN);
@@ -301,7 +366,8 @@ function LiveDraws({ log, stats }: { log: TicketLog | null; stats: Stats | null 
       {draws && draws.length > 0 && (
         <ul className="draws" aria-live="polite">
           {draws.map((d) => {
-            const won = d.payout !== null && d.payout > 0n;
+            // a refunded direct ticket's payout is its credit back, not a win
+            const won = d.payout !== null && d.payout > 0n && !d.expired;
             const quiet = d.payout !== null && !won;
             const cls = [
               "draw-row",
@@ -324,7 +390,9 @@ function LiveDraws({ log, stats }: { log: TicketLog | null; stats: Stats | null 
                     <span className="draw-words">{winWords(d.kind, d.price, d.payout!)}</span>
                   )}
                   {quiet && (
-                    <span className="draw-outcome">{d.expired ? "no draw" : NOT_THIS_TIME}</span>
+                    <span className="draw-outcome">
+                      {d.expired ? noDrawWords(d) : NOT_THIS_TIME}
+                    </span>
                   )}
                 </span>
                 {d.payout === null ? (
@@ -389,10 +457,14 @@ function VaultShortcut({ state }: { state: Live }) {
         <span className="vault-card-title">Earn from every ticket</span>
       </span>
       <span className="vault-card-apr">
-        <span className={apr?.pct != null ? "up" : "muted"}>
-          {apr?.pct != null ? fmtApr(apr.pct) : "–"}
-        </span>
-        <span className="small muted">est. APR</span>
+        {apr ? (
+          <span className={apr.pct !== null ? "up" : "muted"}>
+            {apr.pct !== null ? fmtApr(apr.pct) : "–"}
+          </span>
+        ) : (
+          <Skeleton w={56} h={20} inline />
+        )}
+        <span className="small muted">{APR_LABEL}</span>
       </span>
     </Link>
   );
@@ -400,7 +472,7 @@ function VaultShortcut({ state }: { state: Live }) {
 
 export function DemosPage() {
   const protocol = useProtocol();
-  const tab = tabOf(useHash());
+  const tab = tabIn(useHash(), TABS);
   const setTab = (t: Tab) => replaceHash(t);
   const dir = useDirection(TABS.findIndex((t) => t.id === tab));
   const state = protocol.data;
@@ -409,7 +481,10 @@ export function DemosPage() {
   const funds = useWalletFunds(owner);
   // the demos act for the connected wallet only, never for one viewed with `?as=`
   const demoFunds = connected ? funds : null;
-  const programTickets = useProgramTickets();
+  // the live draws: the keeper's feed, the program's tickets read here when it cannot serve it
+  const feed = useKeeperFeed();
+  const programTickets = useProgramTicketsWhen(needsOwn(feed.data, feed.error !== null));
+  const draws = chooseView(feed.data, programTickets.data);
   const stats = useStats().data;
   // figures still climbing while the keeper reads the history are not shown
   const allTime = stats && !stats.syncing ? stats : null;
@@ -455,6 +530,11 @@ export function DemosPage() {
                   {t.id === "checkout" && <CheckoutDemo state={state} funds={demoFunds} />}
                   {t.id === "swap" && <SwapDemo state={state} funds={demoFunds} />}
                   {t.id === "booster" && <BoosterDemo state={state} funds={demoFunds} />}
+                  {t.id === "beacon" && BEACON_PROGRAM && BeaconDemo && (
+                    <Suspense fallback={<Skeleton h={420} />}>
+                      <BeaconDemo program={BEACON_PROGRAM} funds={demoFunds} />
+                    </Suspense>
+                  )}
                 </div>
               ))}
             </AnimatedHeight>
@@ -463,10 +543,13 @@ export function DemosPage() {
           <aside className="home-side" aria-label="Wallet, live draws and the vault">
             <WalletBlock owner={owner} funds={funds} />
             <WinsKpi stats={allTime} />
-            <LiveDraws log={programTickets.data} stats={allTime} />
+            <LiveDraws
+              log={draws && ("keeper" in draws ? draws.keeper : draws.own)}
+              stats={allTime}
+            />
             <VaultShortcut state={state} />
           </aside>
-          <DevSimPanel demo={tab} />
+          {tab !== "beacon" && <DevSimPanel demo={tab} />}
         </div>
       )}
     </div>

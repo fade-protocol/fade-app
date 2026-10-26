@@ -46,17 +46,24 @@ These are the specification's values (`RiskParams::SPEC`). The devnet deployment
 | --- | --- |
 | **short on time** | this page, then the [Technical Specification](spec/README.md) §1 and §2 |
 | **a prospective liquidity provider** | this page, then [Spec 01](spec/01-vault-and-lp-accounting.md) and [Spec 04](spec/04-risk-and-exposure.md) |
-| **a developer thinking of integrating** | this page, then [Spec 07](spec/07-solana-implementation-security.md) and [Spec 03](spec/03-payout-table-invariant.md) |
-| **an auditor or a reviewer** | [Technical Specification](spec/README.md) end to end, then domain documents 08, 07, 01, 02, 03, 04, 05 |
+| **a developer thinking of integrating** | this page, then [Spec 07](spec/07-solana-implementation-security.md) and [Spec 03](spec/03-payout-table-invariant.md); for small tickets, [Beacon Integration](product/beacon-integration.md) |
+| **an auditor or a reviewer** | [Technical Specification](spec/README.md) end to end, then domain documents 08, 07, 01, 02, 03, 04, 05, 09, then the [agent audit of 22 October 2026](audit/2026-10-22-agent-audit.md) |
 
 ## Where the project stands
 
 - **V1 is specified and implemented.** Every page here is a specification; the program is written against it, in [`programs/fade`](../programs/fade), and runs on Solana devnet behind the app at https://app.fade.finance and the keeper at https://api.fade.finance.
-- **V1 is one asset and one oracle.** Legacy SPL USDC and ORAO. Every ticket gets its own draw. The distribution is frozen when the ticket opens, and there are no callbacks into integrator programs.
+- **The launch is one asset, one oracle, and two paths to a draw.** Legacy SPL USDC and ORAO. The direct path gives a ticket its own draw, from 7.5 USDC; the shared beacon serves small tickets with one draw per round, from a minimum targeted at 0.10 USD ([Spec 09](spec/09-shared-beacon.md)). The distribution is frozen when the ticket opens, and there are no callbacks into integrator programs.
 - **The upgrade key exists** — a 4-of-7 council behind a 72-hour timelock, plus a 2-of-3 guardian that can only tighten. Burning it now would strand liquidity behind the first bug.
 - **The demo runs on devnet**: the checkout, swap and Booster demos open real tickets against the devnet vault, drawn by ORAO and settled by the keeper. The mainnet launch funds the vault with 5 000 USDC from the team.
+- **The shared beacon is in the launch scope.** It is what makes round-ups, cashbacks and other payments of a few cents possible, the single change that most widens what Fade can serve. It is designed ([Spec 09](spec/09-shared-beacon.md)) and implemented in the program, tested and run against ORAO on devnet; the live devnet deployment carries it since 18 October 2026, one program with the direct path, its rounds paused (`PAUSE_ROUNDS`) until the council opens them, and its audit is ahead ([Beacon Integration](product/beacon-integration.md)).
 
 ## The map
+
+**Integration**
+
+| Page | Read it for |
+| --- | --- |
+| [Beacon Integration](product/beacon-integration.md) | How an integrator sends small tickets through the shared beacon: the join, no cancellation, a lone ticket sponsored in its join, capacity refusals and their retry, the largest multiplier per vault size |
 
 **Technical** — the mechanism, its parameters and their derivations
 
@@ -70,6 +77,7 @@ These are the specification's values (`RiskParams::SPEC`). The devnet deployment
 | [Spec 05 — Governance and Upgrade Safety](spec/05-governance.md) | Who may change what, how long it takes, and what can never be changed |
 | [Spec 07 — Solana Implementation Security](spec/07-solana-implementation-security.md) | Per-instruction account validation, CPI authentication, the audit plan |
 | [Spec 08 — Program Architecture](spec/08-program-architecture.md) | The accounts and what each instruction writes, the epoch lifecycle, who pays for strikes and claims, throughput |
+| [Spec 09 — Shared Beacon](spec/09-shared-beacon.md) | One ORAO draw settling every ticket of a round: the path for small tickets |
 
 **Evidence and code**
 
@@ -79,5 +87,6 @@ These are the specification's values (`RiskParams::SPEC`). The devnet deployment
 | [`programs/fade`](../programs/fade) | The protocol itself |
 | [`docs/diagrams`](diagrams) | The drawings on these pages, as SVG, with the generator that produces them |
 | [Event schema versions](event-versions.md) | The version history of every event the program emits |
+| [Agent audit of 22 October 2026](audit/2026-10-22-agent-audit.md) | The AI audit of the program, its five findings and their fixes, the review and re-audit record; not a substitute for the independent audit before mainnet |
 
 Four specification documents carry an appendix, sitting beside them in [`spec/`](spec). Every parameter on every page comes from the [Technical Specification](spec/README.md) §2 table, which wins wherever two pages disagree.

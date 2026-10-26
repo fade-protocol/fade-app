@@ -34,6 +34,7 @@ fn reason(r: Reject) -> &'static str {
         Reject::GlobalExposure => "GlobalExposure",
         Reject::Insolvent => "Insolvent",
         Reject::Overflow => "Overflow",
+        Reject::EpochClosed => "EpochClosed",
     }
 }
 
@@ -335,7 +336,8 @@ fn withdrawal_chains_match_the_reference_and_never_over_pay() {
 
 // ---------------------------------------------------------------------------
 // Shared beacon: every function of `fade_math::beacon` against the reference,
-// whole rounds step by step, and the seed and outcome preimages and hashes.
+// whole rounds step by step, the seed and outcome preimages and hashes, and
+// the payout tables' preimages and hashes.
 
 mod beacon_vectors {
     use fade_math::beacon::{self, Book, Entry, Terms};
@@ -347,6 +349,14 @@ mod beacon_vectors {
         scalars: Vec<Scalar>,
         rounds: Vec<Round>,
         seeds: Vec<Seed>,
+        payout_tables: Vec<TableHash>,
+    }
+
+    #[derive(Deserialize)]
+    struct TableHash {
+        outcomes: Vec<(u64, u64)>,
+        preimage: String,
+        hash: String,
     }
 
     fn load() -> File {
@@ -382,6 +392,8 @@ mod beacon_vectors {
         sponsorship_to_pay: u64,
         usage: Option<u64>,
         fits: bool,
+        within_join_share: bool,
+        within_join_share_paying: bool,
         close_slot: Option<u64>,
         draw_cost: Option<u64>,
         charge: u64,
@@ -392,7 +404,7 @@ mod beacon_vectors {
     fn every_function_matches_the_reference() {
         let f = load();
         assert_eq!(f.scalars.len(), 2000);
-        let (mut fits, mut paid) = (0, 0);
+        let (mut fits, mut paid, mut shares) = (0, 0, 0);
         for (i, c) in f.scalars.iter().enumerate() {
             let t = Terms {
                 threshold: c.threshold,
@@ -440,6 +452,16 @@ mod beacon_vectors {
                 "case {i} fits"
             );
             assert_eq!(
+                beacon::within_join_share(&t, c.usage_total, c.price, c.sponsorship, false),
+                c.within_join_share,
+                "case {i} within_join_share"
+            );
+            assert_eq!(
+                beacon::within_join_share(&t, c.usage_total, c.price, c.sponsorship, true),
+                c.within_join_share_paying,
+                "case {i} within_join_share paying"
+            );
+            assert_eq!(
                 beacon::close_slot(c.paid_slot, c.tick).ok(),
                 c.close_slot,
                 "case {i} close"
@@ -461,9 +483,14 @@ mod beacon_vectors {
             );
             fits += usize::from(c.fits);
             paid += usize::from(c.is_paid);
+            shares += usize::from(c.within_join_share);
         }
         assert!(fits > 200 && fits < 1_800, "{fits} fitting cases");
         assert!(paid > 200 && paid < 1_800, "{paid} paid cases");
+        assert!(
+            shares > 200 && shares < 1_800,
+            "{shares} cases within the join share"
+        );
     }
 
     #[derive(Deserialize, Clone, Copy)]
@@ -692,6 +719,22 @@ mod beacon_vectors {
                 "case {i} outcome preimage"
             );
             assert_eq!(to_hex(&Sha256::digest(out)), s.outcome, "case {i} outcome");
+        }
+    }
+
+    #[test]
+    fn payout_table_hashes_match_the_reference() {
+        let f = load();
+        assert_eq!(f.payout_tables.len(), 200);
+        for (i, t) in f.payout_tables.iter().enumerate() {
+            let outcomes: Vec<fade_math::payout_table::Outcome> = t
+                .outcomes
+                .iter()
+                .map(|&(p, m)| fade_math::payout_table::Outcome { p, m })
+                .collect();
+            let (buf, n) = beacon::payout_table_preimage(&outcomes).unwrap();
+            assert_eq!(to_hex(&buf[..n]), t.preimage, "case {i} preimage");
+            assert_eq!(to_hex(&Sha256::digest(&buf[..n])), t.hash, "case {i} hash");
         }
     }
 }

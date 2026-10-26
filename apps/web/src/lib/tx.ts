@@ -17,6 +17,7 @@ import {
   type Signature,
   type TransactionSigner,
 } from "@solana/kit";
+import { getJsonTransaction } from "../../../../clients/js/src/transactionFetch.ts";
 import { COMPUTE_BUDGET, explorerTx } from "./config";
 import { rpc, sleep } from "./rpc";
 
@@ -163,6 +164,14 @@ function findLogs(e: unknown): string[] {
   return [];
 }
 
+/** A failed transaction's logs, whatever its version; null when unreadable. */
+const failedTx = (signature: Signature) =>
+  getJsonTransaction<{ meta: { logMessages?: readonly string[] | null } | null }>(
+    rpc,
+    signature,
+    "confirmed",
+  ).catch(() => null);
+
 /** Polls the signature until `confirmed`; a landed failure is decoded from its logs. */
 export async function confirm(
   signature: Signature,
@@ -175,14 +184,7 @@ export async function confirm(
     const s = value[0];
     if (s && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized")) {
       if (s.err) {
-        const t = await rpc
-          .getTransaction(signature, {
-            commitment: "confirmed",
-            maxSupportedTransactionVersion: 0,
-            encoding: "json",
-          })
-          .send()
-          .catch(() => null);
+        const t = await failedTx(signature);
         throw new TxError(
           label,
           decodeFailure(s.err, (t?.meta?.logMessages as string[] | undefined) ?? []),
@@ -219,14 +221,7 @@ export async function signatureStatus(
   if (!s || (s.confirmationStatus !== "confirmed" && s.confirmationStatus !== "finalized"))
     return { state: "unknown" };
   if (!s.err) return { state: "landed" };
-  const t = await rpc
-    .getTransaction(signature, {
-      commitment: "confirmed",
-      maxSupportedTransactionVersion: 0,
-      encoding: "json",
-    })
-    .send()
-    .catch(() => null);
+  const t = await failedTx(signature);
   return {
     state: "failed",
     failure: decodeFailure(s.err, (t?.meta?.logMessages as string[] | undefined) ?? []),

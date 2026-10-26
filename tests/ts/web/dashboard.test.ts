@@ -25,12 +25,10 @@ import {
   ownerShareBps,
   paidProgress,
   pendingRequests,
-  providerRows,
-  shareOfBps,
   summarise,
-  valueOf,
   type PendingRequest,
 } from "../../../apps/web/src/lib/position.ts";
+import { providerRows, shareOfBps, valueOf } from "../../../apps/web/src/lib/providers.ts";
 import {
   bookOf,
   heldSeries,
@@ -439,5 +437,32 @@ describe("My app", () => {
     expect(f.used).toBe(2.5);
     expect(appFigures([], 30_000n * USDC, 100_000n * USDC, 2000n).used).toBe(100);
     expect(appFigures([], USDC, 0n, 2000n)).toEqual({ appShare: 0n, paid: 0n, cap: 0n, used: 0 });
+  });
+  it("counts no app share, and no price spent, on a refunded beacon ticket", () => {
+    const beacon = (refunded: boolean): TicketRow =>
+      ticketRow({
+        price: 100_000n,
+        payoutMax: 195_600n,
+        appShareBps: 300n,
+        end: {
+          kind: "expired",
+          payout: 0n,
+          pending: false,
+          ...(refunded ? { refunded: true } : {}),
+          at: T0,
+          signature: "e" as Signature,
+        },
+        beacon: {
+          round: A("round"),
+          payoutTable: A("table"),
+          refundTo: A("funder"),
+          appShare: 3_000n,
+          protocolShare: 200n,
+        },
+      });
+    const rows = [beacon(true), beacon(false)];
+    // the forfeit kept its share; the refund gave the whole price back
+    expect(appFigures(rows, 0n, 100_000n * USDC, 2000n).appShare).toBe(3_000n);
+    expect(ticketStats(rows, () => true).spent).toBe(100_000n);
   });
 });

@@ -57,6 +57,13 @@ const DEVNET_PARAMS: RiskParamsArgs = {
   creditEnabled: false,
   creditBase: 0n,
   creditRateBps: 0n,
+  // Shared beacon (Spec 08 §13.3): RiskParams::SPEC.
+  beaconMinPrice: 500_000n,
+  beaconThreshold: 8_640_000n,
+  roundK: 1n,
+  tickSlots: 37n,
+  refundSlots: 1_715n,
+  crankRoundSettleLamports: 20_000n,
 };
 
 /** The treasury: a plain token account at an address derived from the deployer, so no extra key is needed. */

@@ -216,7 +216,7 @@ def max_admissible_price(vault, integ, params, max_m_bps, app_share_bps, margin,
     return ("ok", lo)
 
 
-# --- Shared beacon (designed, not in the program yet) ----------------------
+# --- Shared beacon (Spec 08 §13.4) -----------------------------------------
 # Ticket prices in micro-USDC, draw amounts in lamports, capacity usage in
 # USAGE_SCALE fixed point. Python integers are unbounded, so every comparison
 # below is the exact rule the Rust side cross-multiplies in u128 / 192 bits.
@@ -226,6 +226,7 @@ import hashlib
 USAGE_SCALE = 10**9
 SEED_TAG = b"FADE/BEACON-SEED/v1"
 OUTCOME_TAG = b"FADE/BEACON-OUTCOME/v1"
+PAYOUT_TABLE_TAG = b"FADE/PAYOUT-TABLE/v1"
 REQUEST_DELAY_SLOTS = 2
 
 
@@ -269,9 +270,24 @@ def beacon_usage(liability, cap):
     return ceil_div(liability * USAGE_SCALE, cap)
 
 
+# h: the share of its paid capacity an unpaid round keeps free, in bps (Spec 09 §7).
+UNPAID_HEADROOM_BPS = 1_000
+
+
 def beacon_fits(T, D, k, U, R, S):
-    """U x T x D <= k x USAGE_SCALE x min(T x D, R x D + S x T)."""
-    return U * T * D <= k * USAGE_SCALE * beacon_paid_units(T, D, R, S)
+    """Paid: U <= k x USAGE_SCALE. Unpaid: U x T x D <= k x USAGE_SCALE x (1 - h) x (R x D + S x T)."""
+    if beacon_is_paid(T, D, R, S):
+        return U <= k * USAGE_SCALE
+    return U * T * D * 10_000 <= k * USAGE_SCALE * (10_000 - UNPAID_HEADROOM_BPS) * (R * D + S * T)
+
+
+def beacon_within_join_share(T, D, k, usage, price, sponsorship, pays_round):
+    """Every join, paid round or not, takes at most k x min(1, price/T + sponsorship/D) caps, or h x k if more
+    for the join that makes the round paid: usage x T x D <= k x USAGE_SCALE x min(T x D, price x D +
+    sponsorship x T), or usage <= k x USAGE_SCALE x h when pays_round."""
+    if pays_round and usage * 10_000 <= k * USAGE_SCALE * UNPAID_HEADROOM_BPS:
+        return True
+    return usage * T * D <= k * USAGE_SCALE * beacon_paid_units(T, D, price, sponsorship)
 
 
 def beacon_close_slot(paid_slot, tick):
@@ -320,6 +336,10 @@ def beacon_join(book, T, D, k, e, sponsorship):
     after["tickets"] += 1
     if not beacon_fits(T, D, k, after["usage"], after["prices"], after["sponsorship"]):
         return None
+    pays_round = (not beacon_is_paid(T, D, book["prices"], book["sponsorship"])
+                  and beacon_is_paid(T, D, after["prices"], after["sponsorship"]))
+    if not beacon_within_join_share(T, D, k, e["usage"], e["price"], sponsorship, pays_round):
+        return None
     return after
 
 
@@ -330,6 +350,17 @@ def beacon_seed_preimage(program, round_, close_slot, entropy_slot, entropy_hash
 
 def beacon_outcome_preimage(program, round_, ticket, randomness, i):
     return OUTCOME_TAG + program + round_ + ticket + randomness + bytes([i])
+
+
+def beacon_payout_table_preimage(outcomes):
+    """Spec 08 §13.2.1: tag, the count as one byte, then p and m of each
+    outcome as little-endian u64. None for no outcome or more than MAX_OUTCOMES."""
+    if not 1 <= len(outcomes) <= MAX_OUTCOMES:
+        return None
+    out = PAYOUT_TABLE_TAG + bytes([len(outcomes)])
+    for p, m in outcomes:
+        out += p.to_bytes(8, "little") + m.to_bytes(8, "little")
+    return out
 
 
 def sha256(b):

@@ -13,7 +13,14 @@ import {
   type LogItem,
   type Move,
 } from "./positionPnl";
-import type { TicketKind, TicketRow } from "./ticketLog";
+import {
+  appShareOf,
+  creditBack,
+  isRefunded,
+  winPayout,
+  type TicketKind,
+  type TicketRow,
+} from "./ticketLog";
 import { buyerLine, type Line } from "./ticketWords";
 
 export type VaultModel = {
@@ -62,7 +69,10 @@ export type TicketStats = {
   wins: number;
   /** Payouts, micro-USDC. */
   won: bigint;
-  /** Ticket prices paid, micro-USDC. */
+  /**
+   * Ticket prices paid, micro-USDC: a refunded beacon ticket's came back, so it is left out; a
+   * refunded direct ticket's counts less the credit that came back.
+   */
   spent: bigint;
   best: TicketRow | null;
   /** Wins over draws, in whole percent, rounded to the nearest. */
@@ -84,12 +94,13 @@ export function ticketStats(
   let best: TicketRow | null = null;
   const byKind = new Map<TicketKind, number>();
   for (const r of rows) {
-    const payout = r.end?.payout ?? 0n;
+    // a refunded direct ticket's payout is its credit back: no draw, no win
+    const payout = winPayout(r.end);
     won += payout;
-    spent += r.price;
+    if (!isRefunded(r)) spent += r.price - creditBack(r.end);
     if (payout > 0n) {
       wins += 1;
-      if (!best || payout > (best.end?.payout ?? 0n)) best = r;
+      if (!best || payout > winPayout(best.end)) best = r;
     }
     const k = line(r, demo(r)).kind;
     byKind.set(k, (byKind.get(k) ?? 0) + 1);
@@ -100,7 +111,7 @@ export function ticketStats(
 }
 
 /**
- * "My app": the app share its tickets earned, what its customers won, and its open exposure
+ * "My app": the app share its tickets earned (none on a refunded beacon ticket), what its customers won, and its open exposure
  * against the cap per app (`whale_bps · assets`), in percent of that cap, to 100.
  */
 export function appFigures(
@@ -109,8 +120,9 @@ export function appFigures(
   totalAssets: bigint,
   whaleBps: bigint,
 ) {
-  const appShare = rows.reduce((n, r) => n + (r.price * r.appShareBps) / BPS, 0n);
-  const paid = rows.reduce((n, r) => n + (r.end?.payout ?? 0n), 0n);
+  const appShare = rows.reduce((n, r) => n + appShareOf(r), 0n);
+  // what its customers won: a refunded direct ticket's credit back is no win
+  const paid = rows.reduce((n, r) => n + winPayout(r.end), 0n);
   const cap = (totalAssets * whaleBps) / BPS;
   const used = cap === 0n ? 0 : Math.min(100, Number((reservedLiability * 10_000n) / cap) / 100);
   return { appShare, paid, cap, used };

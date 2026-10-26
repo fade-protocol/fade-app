@@ -118,6 +118,40 @@ impl Counters {
         Err(Reject::Overflow)
     }
 
+    /// `n` more tickets, joining at `now`, for a group recorded earlier with
+    /// `side` and `generation`, as a shared-beacon round recorded when it
+    /// became paid takes joins until its close: they enter the counter the
+    /// group's tickets are in now, found as `close_n` finds it, so that the
+    /// group keeps one side and one generation and `close_n` later releases
+    /// every one of them. Leaves the counters untouched if it fails.
+    ///
+    /// A group in `before` takes no ticket at or after the live close
+    /// (`Reject::EpochClosed`): `before` holds only tickets opened before the
+    /// close, as rule 3 puts a single ticket opened at `now` (`open`), so
+    /// that the set of tickets an epoch's price contains is fixed at its
+    /// close, and nothing joined after it is priced into it.
+    pub fn join_n(&mut self, now: i64, side: Side, generation: u32, n: u32) -> Result<(), Reject> {
+        let previous = self.generation.checked_sub(1);
+        let in_before = match side {
+            Side::BeforeClose => generation == self.generation,
+            Side::AfterClose => Some(generation) == previous,
+        };
+        if in_before {
+            if self.close_ts == 0 || now >= self.close_ts {
+                return Err(Reject::EpochClosed);
+            }
+            self.before = self.before.checked_add(n).ok_or(Reject::Overflow)?;
+            return Ok(());
+        }
+        if side == Side::AfterClose && generation == self.generation {
+            self.after = self.after.checked_add(n).ok_or(Reject::Overflow)?;
+            return Ok(());
+        }
+        // A group whose counter is gone (two generation changes since it was
+        // recorded, which no open group can outlive) takes nothing.
+        Err(Reject::Overflow)
+    }
+
     /// Rules 1 and 6: a new epoch becomes live with close `close_ts`. Every
     /// ticket still open was opened before that close, so `after` moves into
     /// `before`.
@@ -221,6 +255,73 @@ mod tests {
         // nothing more to promote
         c.clear_close();
         assert_eq!(c.open(5_000).unwrap(), (Side::AfterClose, 2));
+    }
+
+    #[test]
+    fn a_group_takes_joins_in_the_counter_it_is_in_now() {
+        // recorded after the close of generation 0
+        let mut c = Counters {
+            close_ts: 600,
+            ..Counters::default()
+        };
+        let (side, g) = c.open_n(700, 2).unwrap();
+        assert_eq!((side, g), (Side::AfterClose, 0));
+        c.join_n(800, side, g, 1).unwrap();
+        assert_eq!((c.before, c.after), (0, 3));
+        // a strike rolls it into `before`; later joins follow it there
+        c.roll(1_200).unwrap();
+        c.join_n(900, side, g, 2).unwrap();
+        assert_eq!((c.before, c.after, c.generation), (5, 0, 1));
+        // ... until that epoch's close: from it on, the group takes nothing
+        let snapshot = c;
+        assert_eq!(c.join_n(1_200, side, g, 1), Err(Reject::EpochClosed));
+        assert_eq!(c, snapshot);
+        c.close_n(side, g, 5).unwrap();
+        assert!(c.clean());
+        // recorded before the close: joins stay before it, up to the close
+        let (side, g) = c.open_n(1_000, 1).unwrap();
+        assert_eq!(side, Side::BeforeClose);
+        c.join_n(1_199, side, g, 4).unwrap();
+        assert_eq!((c.before, c.after), (5, 0));
+        let snapshot = c;
+        assert_eq!(c.join_n(1_200, side, g, 1), Err(Reject::EpochClosed));
+        assert_eq!(c.join_n(5_000, side, g, 1), Err(Reject::EpochClosed));
+        assert_eq!(c, snapshot);
+        // a group in `before` with no close set takes nothing either
+        let mut cleared = Counters {
+            before: 1,
+            generation: 1,
+            ..Counters::default()
+        };
+        let snapshot = cleared;
+        assert_eq!(
+            cleared.join_n(0, Side::BeforeClose, 1, 1),
+            Err(Reject::EpochClosed)
+        );
+        assert_eq!(cleared, snapshot);
+        // a group in `after` takes joins whatever the time
+        let (side, g) = c.open_n(1_300, 1).unwrap();
+        assert_eq!(side, Side::AfterClose);
+        c.join_n(9_000, side, g, 2).unwrap();
+        assert_eq!((c.before, c.after), (5, 3));
+        // a group two generations old, or from the future, takes nothing
+        let snapshot = c;
+        assert_eq!(c.join_n(0, Side::AfterClose, 7, 1), Err(Reject::Overflow));
+        assert_eq!(c.join_n(0, Side::BeforeClose, 0, 1), Err(Reject::Overflow));
+        assert_eq!(c, snapshot);
+        // overflow leaves the counters alone
+        let mut full = Counters {
+            before: u32::MAX,
+            generation: 1,
+            close_ts: 600,
+            ..Counters::default()
+        };
+        let snapshot = full;
+        assert_eq!(
+            full.join_n(0, Side::BeforeClose, 1, 1),
+            Err(Reject::Overflow)
+        );
+        assert_eq!(full, snapshot);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 10fb6790cb6b5e69cbf7892a2b6e775c8122fa5fcbd4673d347c934ccaf0ab6a # shrinks to (terms, _, _, _) = (Terms { threshold: 1, draw_max: 2, round_k: 1 }, 1, 0, 0), prices = 0, sponsorship = 0, usage_ppm = 0, q = 395, cap = 1, price = 1, raise = 1
+cc 8afbb545155b910840ed8e8a7d6a0f6f5d384facd5858d0fc4e445d87a57fc66 # shrinks to (terms, _, _, _) = (Terms { threshold: 2320608823, draw_max: 105807159, round_k: 1 }, 41703813, 21654970, 744563), prices = 0, sponsorship = 0, usage_ppm = 0, q = 232, cap = 18947109400, price = 1, raise = 1

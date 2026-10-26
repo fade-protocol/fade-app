@@ -316,7 +316,7 @@ export type Fade = {
     {
       "name": "claimPayout",
       "docs": [
-        "Anyone: delivers a payout parked at settlement."
+        "Anyone: delivers a payout parked at settlement or at a refund."
       ],
       "discriminator": [
         127,
@@ -443,6 +443,338 @@ export type Fade = {
         {
           "name": "payer",
           "writable": true
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claimRoundPayout",
+      "docs": [
+        "Anyone, never paused: delivers a beacon ticket's payout or return",
+        "parked in `payout_escrow`, and closes the ticket to its payer."
+      ],
+      "discriminator": [
+        168,
+        118,
+        169,
+        54,
+        90,
+        148,
+        148,
+        169
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "ticket",
+          "docs": [
+            "A parked beacon ticket, at `[\"round-ticket\", integrator, nonce]` with",
+            "its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100,
+                  45,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ticket.integrator",
+                "account": "roundTicket"
+              },
+              {
+                "kind": "account",
+                "path": "ticket.nonce",
+                "account": "roundTicket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "The only destination: `ticket.beneficiary` for a parked payout,",
+            "`ticket.refund_to` for a parked return (`BeneficiaryMismatch`)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payoutEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  111,
+                  117,
+                  116,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "ticket holds, its rent and what it kept for it at settlement."
+          ],
+          "writable": true
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claimShares",
+      "docs": [
+        "Anyone, never paused: the protocol's beacon shares to the treasury, or,",
+        "with `integrator`, its app shares to its share account; the whole",
+        "claimable ledger, which a destination unable to receive keeps."
+      ],
+      "discriminator": [
+        130,
+        131,
+        29,
+        237,
+        134,
+        20,
+        110,
+        245
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; nobody is paid to claim."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "integrator",
+          "docs": [
+            "The integrator whose app shares are claimed, at",
+            "`[\"integrator\", authority]` with its stored bump; absent for the",
+            "protocol's shares."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  103,
+                  114,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "integrator.authority",
+                "account": "integrator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "(`TreasuryMismatch`), `integrator.share_account` with it",
+            "(`ShareAccountMismatch`); inspected before the transfer, which is",
+            "made only if it can receive (`DestinationUnusable`)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vaultUsdc",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  100,
+                  99,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "usdcMint"
@@ -681,9 +1013,146 @@ export type Fade = {
       "args": []
     },
     {
+      "name": "expireRound",
+      "docs": [
+        "Anyone, never paused, once `T_SETTLE` has passed since the close of a",
+        "paid round whose draw was never requested, or never fulfilled: the",
+        "round forfeits as a whole and leaves the epoch counters. Its tickets'",
+        "credits stay with the vault; each ticket's payer gets back its prepay",
+        "less its charge through `return_round_ticket`. A round never requested",
+        "whose entropy was never recorded and is no longer proven by SlotHashes",
+        "is refunded instead: whether its request exists, fulfilled, can no",
+        "longer be checked."
+      ],
+      "discriminator": [
+        238,
+        222,
+        71,
+        141,
+        104,
+        222,
+        76,
+        248
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; unpaid itself, each forfeited ticket's return pays its",
+            "settlement share."
+          ],
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round, at `[\"round\", id]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.id",
+                "account": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "roundVrf",
+          "docs": [
+            "`[\"round-vrf\", round]` with the round's stored bump: holds what ORAO",
+            "gave back and anything sent to it since the request; drained to the",
+            "round when the round was requested."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100,
+                  45,
+                  118,
+                  114,
+                  102
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "randomness",
+          "docs": [
+            "requested; when it was not, ORAO's request address for the round's",
+            "seed, recorded or proven by SlotHashes; any account when neither (the",
+            "round is then refunded, nothing read). Address, owner and state",
+            "checked in the handler."
+          ]
+        },
+        {
+          "name": "slotHashes",
+          "docs": [
+            "round never requested whose seed is not recorded."
+          ],
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "expireTicket",
       "docs": [
-        "Anyone, after `T_SETTLE`, if the randomness never arrived: forfeiture."
+        "Anyone, after `T_SETTLE`, if the randomness never arrived: forfeiture.",
+        "Refused while a request at the ticket's seed is fulfilled, bound or",
+        "not; a ticket never requested needs its seed recorded first."
       ],
       "discriminator": [
         157,
@@ -781,7 +1250,7 @@ export type Fade = {
         {
           "name": "randomness",
           "docs": [
-            "any account when the ticket was never requested."
+            "request address derived from its recorded seed; checked in the handler."
           ]
         },
         {
@@ -804,7 +1273,8 @@ export type Fade = {
     {
       "name": "initialize",
       "docs": [
-        "One-time setup by the program's upgrade authority; seeds the strike fund."
+        "One-time setup by the program's upgrade authority; seeds the strike fund.",
+        "The beacon starts paused (`PAUSE_ROUNDS`): the council turns it on."
       ],
       "discriminator": [
         175,
@@ -1124,6 +1594,342 @@ export type Fade = {
               "name": "riskParams"
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "joinRound",
+      "docs": [
+        "Signed by the integrator and the funder, as `open_ticket`: a beacon",
+        "ticket admitted on entry into the round accepting tickets, or into the",
+        "next round, which the join then creates. `sponsorship` lamports from",
+        "the payer go to the round's draw with it; 0 for none."
+      ],
+      "discriminator": [
+        191,
+        222,
+        86,
+        25,
+        234,
+        174,
+        157,
+        249
+      ],
+      "accounts": [
+        {
+          "name": "integratorAuthority",
+          "docs": [
+            "The integrator's identity, as in `open_ticket` (Spec 07 §2)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Pays the ticket's rent, the draw prepay, the settlement share, the",
+            "sponsorship and, if this join creates them, the round's and the",
+            "sponsorship record's rent. Gets back what is not spent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "funder",
+          "docs": [
+            "Owns `funder_usdc` and signs for the ticket price."
+          ],
+          "signer": true
+        },
+        {
+          "name": "funderUsdc",
+          "docs": [
+            "Where the ticket price comes from; stored as `refund_to`."
+          ],
+          "writable": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "integrator",
+          "docs": [
+            "Created by the integrator's first ticket on either path; never closed."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  103,
+                  114,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "integratorAuthority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "shareAccount",
+          "docs": [
+            "then checked in the handler as a usable USDC account and stored. No",
+            "share is paid at the join, so it is not read otherwise."
+          ],
+          "optional": true
+        },
+        {
+          "name": "vaultUsdc",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  100,
+                  99,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary",
+          "docs": [
+            "Any legacy-SPL USDC account; stored, and the only place a payout can go."
+          ]
+        },
+        {
+          "name": "payoutTable",
+          "docs": [
+            "Owner and discriminator checked by Anchor; its address against its",
+            "stored hash in the handler (`WrongPayoutTable`), in the check order."
+          ]
+        },
+        {
+          "name": "ticket",
+          "docs": [
+            "Never `init_if_needed`: the address is nonce-scoped and one-shot."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100,
+                  45,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "integrator"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "round and the round this join creates, if any (round resolution)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "nextRound",
+          "writable": true
+        },
+        {
+          "name": "sponsorshipRecord",
+          "docs": [
+            "`sponsorship > 0`; matched against the derived address in the handler,",
+            "created or topped up there."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "oraoNetworkState",
+          "docs": [
+            "id; read, owner checked, on every join: its fee sets a created round's",
+            "prefund and must still fit the target round's."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  111,
+                  45,
+                  118,
+                  114,
+                  102,
+                  45,
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  117,
+                  114,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                7,
+                71,
+                177,
+                26,
+                250,
+                145,
+                180,
+                209,
+                249,
+                34,
+                242,
+                123,
+                14,
+                186,
+                193,
+                218,
+                178,
+                59,
+                33,
+                41,
+                164,
+                190,
+                243,
+                79,
+                50,
+                164,
+                123,
+                88,
+                245,
+                206,
+                252,
+                120
+              ]
+            }
+          }
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "price",
+          "type": "u64"
+        },
+        {
+          "name": "appShareBps",
+          "type": "u64"
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
+        },
+        {
+          "name": "sponsorship",
+          "type": "u64"
         }
       ]
     },
@@ -1462,6 +2268,707 @@ export type Fade = {
       ]
     },
     {
+      "name": "reclaimSponsorship",
+      "docs": [
+        "Anyone, never paused, once the round is drawn, forfeited or refunded:",
+        "the sponsor's return and the record's rent to the sponsor."
+      ],
+      "discriminator": [
+        12,
+        191,
+        46,
+        60,
+        198,
+        100,
+        209,
+        198
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone: the return goes to the sponsor whoever sends it."
+          ],
+          "signer": true
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round, at `[\"round\", id]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.id",
+                "account": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sponsorship",
+          "docs": [
+            "The record, at `[\"sponsorship\", round, sponsor]` with its stored bump,",
+            "of this round; closed here, its rent to the sponsor."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  112,
+                  111,
+                  110,
+                  115,
+                  111,
+                  114,
+                  115,
+                  104,
+                  105,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round"
+              },
+              {
+                "kind": "account",
+                "path": "sponsor"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sponsor",
+          "docs": [
+            "and the record's lamports."
+          ],
+          "writable": true,
+          "relations": [
+            "sponsorship"
+          ]
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "no sponsorship, and then must be `round.rent_payer`",
+            "(`RentReceiverRequired`); not read otherwise."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "recordRoundEntropy",
+      "docs": [
+        "Anyone, never paused, unpaid: records a paid round's seed and entropy",
+        "slot while SlotHashes proves them (from two slots after its close, for",
+        "about 512 slots), so that finding its ORAO request never depends on",
+        "the sysvar again. Succeeds without writing on a round already recorded."
+      ],
+      "discriminator": [
+        10,
+        224,
+        194,
+        91,
+        123,
+        242,
+        42,
+        154
+      ],
+      "accounts": [
+        {
+          "name": "round",
+          "docs": [
+            "The round, at `[\"round\", id]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.id",
+                "account": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "slotHashes",
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "recordTicketEntropy",
+      "docs": [
+        "Anyone, never paused, unpaid: records an Open ticket's seed and",
+        "entropy slot while SlotHashes proves them (from two slots after its",
+        "open, for about 512 slots), so that finding its ORAO request never",
+        "depends on the sysvar again. Succeeds without writing on a ticket",
+        "already recorded."
+      ],
+      "discriminator": [
+        69,
+        13,
+        51,
+        142,
+        153,
+        3,
+        89,
+        129
+      ],
+      "accounts": [
+        {
+          "name": "ticket",
+          "docs": [
+            "The ticket, at `[\"ticket\", integrator, nonce]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ticket.integrator",
+                "account": "ticket"
+              },
+              {
+                "kind": "account",
+                "path": "ticket.nonce",
+                "account": "ticket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "slotHashes",
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "refundExpiredTicket",
+      "docs": [
+        "Anyone, never paused, paid the settler's share, after `T_SETTLE`: an",
+        "Open ticket whose seed was never recorded and whose entropy slot",
+        "SlotHashes no longer proves gets its vault credit back, since whether",
+        "its request exists, fulfilled, can no longer be checked."
+      ],
+      "discriminator": [
+        121,
+        166,
+        177,
+        230,
+        43,
+        117,
+        142,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; receives the settler's share of the crank fee."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "integrator",
+          "writable": true
+        },
+        {
+          "name": "ticket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ticket.integrator",
+                "account": "ticket"
+              },
+              {
+                "kind": "account",
+                "path": "ticket.nonce",
+                "account": "ticket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vrfPayer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  114,
+                  102,
+                  45,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ticket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "slotHashes",
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        },
+        {
+          "name": "beneficiary",
+          "writable": true
+        },
+        {
+          "name": "payoutEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  111,
+                  117,
+                  116,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultUsdc",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  100,
+                  99,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "refundRound",
+      "docs": [
+        "A participant of the round (its ticket's payer, funder or integrator),",
+        "or anyone when the round's draw no longer fits its prefund at ORAO's",
+        "live fee, never paused, once the round has taken no join for",
+        "`refund_slots`, while its draw is unpaid: the round leaves the vault's",
+        "books in one step and takes no more joins; each ticket then gets back",
+        "exactly what it put in through `return_round_ticket`."
+      ],
+      "discriminator": [
+        177,
+        128,
+        106,
+        163,
+        99,
+        60,
+        213,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "One of the round's participants (`participant`), or anyone when the",
+            "round's draw no longer fits its prefund; nobody is paid to refund",
+            "(Spec 09 §6)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round, at `[\"round\", id]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.id",
+                "account": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "participant",
+          "docs": [
+            "of the round whose payer or funder is `caller`, or whose integrator is",
+            "`caller`'s (`[\"integrator\", caller]`). A sponsorship is not one: any",
+            "amount, one lamport, makes a record, so it would let an outsider",
+            "refund for one fee. Owner, discriminator and fields checked in the",
+            "handler (`is_participant`); only read. Ignored for a round whose draw",
+            "no longer fits its prefund, which anyone may refund."
+          ]
+        },
+        {
+          "name": "oraoNetworkState",
+          "docs": [
+            "id, owner checked in the handler, as `join_round` reads it: its live fee",
+            "tells whether the round's draw still fits its prefund (`request_fits`)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  111,
+                  45,
+                  118,
+                  114,
+                  102,
+                  45,
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  117,
+                  114,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                7,
+                71,
+                177,
+                26,
+                250,
+                145,
+                180,
+                209,
+                249,
+                34,
+                242,
+                123,
+                14,
+                186,
+                193,
+                218,
+                178,
+                59,
+                33,
+                41,
+                164,
+                190,
+                243,
+                79,
+                50,
+                164,
+                123,
+                88,
+                245,
+                206,
+                252,
+                120
+              ]
+            }
+          }
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "registerPayoutTable",
+      "docs": [
+        "Anyone, never paused: stores a valid payout table at the address of its",
+        "hash. Succeeds without writing if it is stored already."
+      ],
+      "discriminator": [
+        210,
+        157,
+        159,
+        65,
+        177,
+        118,
+        196,
+        202
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Pays the account's rent, for good: a payout table is never closed."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "payoutTable",
+          "docs": [
+            "handler from the argument after the table is validated, never taken",
+            "from the caller; created there, or read if the program owns it already."
+          ],
+          "writable": true
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "outcomes",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "outcome"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "requestDeposit",
       "discriminator": [
         243,
@@ -1719,7 +3226,9 @@ export type Fade = {
     {
       "name": "requestRandomness",
       "docs": [
-        "Anyone, from two slots after the open until `T_SETTLE`."
+        "Anyone, from two slots after the open until `T_SETTLE`; after it, only",
+        "a request someone created through ORAO at the ticket's seed and ORAO",
+        "fulfilled with a non-zero value, bound without funding anything."
       ],
       "discriminator": [
         213,
@@ -1791,6 +3300,198 @@ export type Fade = {
               {
                 "kind": "account",
                 "path": "ticket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "slotHashes",
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        },
+        {
+          "name": "oraoNetworkState",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  111,
+                  45,
+                  118,
+                  114,
+                  102,
+                  45,
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  117,
+                  114,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                7,
+                71,
+                177,
+                26,
+                250,
+                145,
+                180,
+                209,
+                249,
+                34,
+                242,
+                123,
+                14,
+                186,
+                193,
+                218,
+                178,
+                59,
+                33,
+                41,
+                164,
+                190,
+                243,
+                79,
+                50,
+                164,
+                123,
+                88,
+                245,
+                206,
+                252,
+                120
+              ]
+            }
+          }
+        },
+        {
+          "name": "oraoTreasury",
+          "writable": true
+        },
+        {
+          "name": "request",
+          "writable": true
+        },
+        {
+          "name": "oraoProgram",
+          "address": "VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "requestRoundDraw",
+      "docs": [
+        "Anyone, never paused, paid the round's request share: one ORAO request",
+        "for every ticket of a paid round, from two slots after its close until",
+        "`T_SETTLE`. The round's tickets are already in the epoch counters,",
+        "recorded when it became paid."
+      ],
+      "discriminator": [
+        60,
+        38,
+        56,
+        179,
+        242,
+        31,
+        80,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; receives the round's request share."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round, at `[\"round\", id]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.id",
+                "account": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "roundVrf",
+          "docs": [
+            "`[\"round-vrf\", round]` with the round's stored bump: pays ORAO, signed",
+            "by the program. System-owned, empty outside the request."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100,
+                  45,
+                  118,
+                  114,
+                  102
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round"
               }
             ]
           }
@@ -2153,6 +3854,256 @@ export type Fade = {
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "returnRoundTicket",
+      "docs": [
+        "Anyone, never paused: one ticket of a refunded or forfeited round",
+        "leaves it, with what it is owed. Pays the caller the ticket's",
+        "settlement share for a forfeited ticket, nothing for a refunded one."
+      ],
+      "discriminator": [
+        243,
+        151,
+        148,
+        75,
+        68,
+        46,
+        179,
+        163
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; paid the ticket's settlement share for a forfeited ticket,",
+            "nothing for a refunded one."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The ticket's round, at `[\"round\", ticket.round]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ticket.round",
+                "account": "roundTicket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "integrator",
+          "docs": [
+            "The ticket's stored integrator."
+          ],
+          "writable": true
+        },
+        {
+          "name": "ticket",
+          "docs": [
+            "The ticket, at `[\"round-ticket\", integrator, nonce]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100,
+                  45,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ticket.integrator",
+                "account": "roundTicket"
+              },
+              {
+                "kind": "account",
+                "path": "ticket.nonce",
+                "account": "roundTicket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "charge after a forfeiture) and the ticket's rent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "refundTo",
+          "docs": [
+            "a refunded ticket price goes; inspected before any transfer, and not",
+            "read for a forfeited ticket."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payoutEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  111,
+                  117,
+                  116,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultUsdc",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  100,
+                  99,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "no sponsorship, and then must be `round.rent_payer`",
+            "(`RentReceiverRequired`); not read otherwise."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
     },
     {
       "name": "setParams",
@@ -2620,6 +4571,249 @@ export type Fade = {
       ]
     },
     {
+      "name": "settleRoundTickets",
+      "docs": [
+        "Anyone, never paused, once the round's randomness is fulfilled; no",
+        "deadline. Settles `count` of its tickets, named in remaining accounts",
+        "by groups of `ticket`, `integrator`, `payer`, `payout_table`, then",
+        "`beneficiary` exactly when bit `i` of `wins` is set; each checked",
+        "against the ticket's stored keys. The first settlement of a round",
+        "fixes its draw cost. Pays the caller each ticket's settlement share."
+      ],
+      "discriminator": [
+        163,
+        231,
+        149,
+        201,
+        242,
+        42,
+        240,
+        91
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone, once the round's randomness is fulfilled; receives each",
+            "settled ticket's settlement share."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round, at `[\"round\", id]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.id",
+                "account": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "roundVrf",
+          "docs": [
+            "`[\"round-vrf\", round]` with the round's stored bump: holds ORAO's rent",
+            "refund after the fulfilment, drained by the first settlement."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100,
+                  45,
+                  118,
+                  114,
+                  102
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "randomness",
+          "docs": [
+            "owner, kind, seed and value checked in the handler at the first",
+            "settlement, the only one that reads it."
+          ]
+        },
+        {
+          "name": "payoutEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  111,
+                  117,
+                  116,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultUsdc",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  100,
+                  99,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "sponsorship, and then must be `round.rent_payer`",
+            "(`RentReceiverRequired`); not read otherwise."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "count",
+          "type": "u8"
+        },
+        {
+          "name": "wins",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "settleTicket",
       "docs": [
         "Anyone, once ORAO has fulfilled; no deadline."
@@ -2844,6 +5038,209 @@ export type Fade = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "sponsorRound",
+      "docs": [
+        "Anyone, never paused: `lamports` to a round's draw, until its request.",
+        "Returned pro rata after a draw or a forfeiture, in full after a refund."
+      ],
+      "discriminator": [
+        50,
+        13,
+        178,
+        71,
+        135,
+        196,
+        84,
+        77
+      ],
+      "accounts": [
+        {
+          "name": "sponsor",
+          "docs": [
+            "Pays the sponsorship and, for a new record, its rent; gets back what",
+            "the draw does not use, and the rent, through `reclaim_sponsorship`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Its epoch counters record the round's tickets if this sponsorship pays it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round, at `[\"round\", id]` with its stored bump."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.id",
+                "account": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sponsorship",
+          "docs": [
+            "address, created or topped up in the handler by the same function as",
+            "`join_round`'s record (`ConstraintSeeds`, `AccountOwnedByWrongProgram`)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "oraoNetworkState",
+          "docs": [
+            "id, owner checked when read: the round's draw must still fit its",
+            "prefund, as for a join (`DrawUnderfunded`)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  111,
+                  45,
+                  118,
+                  114,
+                  102,
+                  45,
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  117,
+                  114,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                7,
+                71,
+                177,
+                26,
+                250,
+                145,
+                180,
+                209,
+                249,
+                34,
+                242,
+                123,
+                14,
+                186,
+                193,
+                218,
+                178,
+                59,
+                33,
+                41,
+                164,
+                190,
+                243,
+                79,
+                50,
+                164,
+                123,
+                88,
+                245,
+                206,
+                252,
+                120
+              ]
+            }
+          }
+        },
+        {
+          "name": "config",
+          "docs": [
+            "The config, at `[\"config\"]` with its stored bump: its pause flags."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "lamports",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "strikeEpoch",
@@ -3135,6 +5532,262 @@ export type Fade = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "sweepRoundVrf",
+      "docs": [
+        "Anyone, never paused, unpaid: the lamports on round `round_id`'s",
+        "`round_vrf` after its last drain (ORAO's refund for a request fulfilled",
+        "after the round forfeited, or a transfer), into the round while it",
+        "exists and is not `Requested`, to the caller once it has closed.",
+        "Nothing to sweep succeeds without moving anything."
+      ],
+      "discriminator": [
+        82,
+        48,
+        181,
+        66,
+        134,
+        194,
+        108,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; receives what a closed round's `round_vrf` holds, nothing",
+            "otherwise."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Read for `next_round_id`: only a round the vault created is swept."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "`Round` while the program owns it; any other owner means the round has",
+            "closed (a round's address is never used again), and it is not read."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "roundId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "roundVrf",
+          "docs": [
+            "`[\"round-vrf\", round]`, signed by the program."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100,
+                  45,
+                  118,
+                  114,
+                  102
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "roundId",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "sweepTicketVrf",
+      "docs": [
+        "Anyone, never paused, unpaid: the lamports on a closed direct ticket's",
+        "`vrf_payer` (ORAO's refund for a request fulfilled after the ticket",
+        "expired, or a transfer), to the caller. Nothing to sweep succeeds",
+        "without moving anything."
+      ],
+      "discriminator": [
+        150,
+        251,
+        4,
+        133,
+        210,
+        149,
+        96,
+        241
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; receives what a closed ticket's `vrf_payer` holds."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "integrator",
+          "docs": [
+            "Read for `next_nonce`: only a ticket the integrator opened is swept."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  103,
+                  114,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "integrator.authority",
+                "account": "integrator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ticket",
+          "docs": [
+            "its owner is read: a ticket's address is never used again, so any",
+            "owner but this program means the ticket has closed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "integrator"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vrfPayer",
+          "docs": [
+            "`[\"vrf-payer\", ticket]`, signed by the program."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  114,
+                  102,
+                  45,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ticket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "nonce",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -3191,6 +5844,19 @@ export type Fade = {
       ]
     },
     {
+      "name": "payoutTable",
+      "discriminator": [
+        229,
+        137,
+        143,
+        236,
+        161,
+        223,
+        173,
+        188
+      ]
+    },
+    {
       "name": "queue",
       "discriminator": [
         204,
@@ -3201,6 +5867,45 @@ export type Fade = {
         33,
         2,
         188
+      ]
+    },
+    {
+      "name": "round",
+      "discriminator": [
+        87,
+        127,
+        165,
+        51,
+        73,
+        78,
+        116,
+        174
+      ]
+    },
+    {
+      "name": "roundTicket",
+      "discriminator": [
+        159,
+        187,
+        158,
+        216,
+        109,
+        75,
+        242,
+        129
+      ]
+    },
+    {
+      "name": "sponsorship",
+      "discriminator": [
+        191,
+        110,
+        48,
+        7,
+        9,
+        44,
+        168,
+        248
       ]
     },
     {
@@ -3388,6 +6093,19 @@ export type Fade = {
       ]
     },
     {
+      "name": "payoutTableRegistered",
+      "discriminator": [
+        96,
+        26,
+        125,
+        123,
+        123,
+        2,
+        69,
+        139
+      ]
+    },
+    {
       "name": "randomnessRequested",
       "discriminator": [
         10,
@@ -3398,6 +6116,175 @@ export type Fade = {
         63,
         90,
         149
+      ]
+    },
+    {
+      "name": "roundClosed",
+      "discriminator": [
+        45,
+        243,
+        28,
+        22,
+        132,
+        70,
+        175,
+        226
+      ]
+    },
+    {
+      "name": "roundDrawRequested",
+      "discriminator": [
+        224,
+        251,
+        117,
+        114,
+        235,
+        120,
+        85,
+        102
+      ]
+    },
+    {
+      "name": "roundDrawn",
+      "discriminator": [
+        147,
+        89,
+        5,
+        223,
+        177,
+        229,
+        18,
+        87
+      ]
+    },
+    {
+      "name": "roundEntropyRecorded",
+      "discriminator": [
+        219,
+        129,
+        175,
+        130,
+        40,
+        212,
+        128,
+        37
+      ]
+    },
+    {
+      "name": "roundExpired",
+      "discriminator": [
+        93,
+        120,
+        89,
+        173,
+        92,
+        124,
+        70,
+        38
+      ]
+    },
+    {
+      "name": "roundOpened",
+      "discriminator": [
+        99,
+        173,
+        228,
+        72,
+        142,
+        57,
+        109,
+        178
+      ]
+    },
+    {
+      "name": "roundPaid",
+      "discriminator": [
+        225,
+        220,
+        210,
+        19,
+        148,
+        21,
+        127,
+        154
+      ]
+    },
+    {
+      "name": "roundPayoutClaimed",
+      "discriminator": [
+        119,
+        161,
+        155,
+        239,
+        77,
+        206,
+        176,
+        16
+      ]
+    },
+    {
+      "name": "roundRefunded",
+      "discriminator": [
+        203,
+        164,
+        53,
+        34,
+        132,
+        31,
+        105,
+        230
+      ]
+    },
+    {
+      "name": "roundSponsored",
+      "discriminator": [
+        79,
+        27,
+        38,
+        239,
+        209,
+        251,
+        209,
+        132
+      ]
+    },
+    {
+      "name": "roundTicketReturned",
+      "discriminator": [
+        21,
+        255,
+        186,
+        248,
+        64,
+        109,
+        130,
+        148
+      ]
+    },
+    {
+      "name": "roundTicketSettled",
+      "discriminator": [
+        37,
+        42,
+        193,
+        215,
+        154,
+        32,
+        139,
+        127
+      ]
+    },
+    {
+      "name": "roundVrfSwept",
+      "discriminator": [
+        198,
+        32,
+        245,
+        136,
+        178,
+        120,
+        52,
+        152
       ]
     },
     {
@@ -3427,6 +6314,45 @@ export type Fade = {
       ]
     },
     {
+      "name": "sharesClaimed",
+      "discriminator": [
+        135,
+        17,
+        55,
+        130,
+        218,
+        208,
+        153,
+        101
+      ]
+    },
+    {
+      "name": "sponsorshipReclaimed",
+      "discriminator": [
+        22,
+        131,
+        158,
+        20,
+        185,
+        221,
+        35,
+        241
+      ]
+    },
+    {
+      "name": "ticketEntropyRecorded",
+      "discriminator": [
+        98,
+        238,
+        250,
+        26,
+        243,
+        83,
+        87,
+        216
+      ]
+    },
+    {
       "name": "ticketExpired",
       "discriminator": [
         225,
@@ -3437,6 +6363,19 @@ export type Fade = {
         203,
         222,
         131
+      ]
+    },
+    {
+      "name": "ticketJoined",
+      "discriminator": [
+        168,
+        83,
+        152,
+        139,
+        192,
+        232,
+        216,
+        174
       ]
     },
     {
@@ -3463,6 +6402,19 @@ export type Fade = {
         159,
         190,
         211
+      ]
+    },
+    {
+      "name": "ticketVrfSwept",
+      "discriminator": [
+        90,
+        218,
+        34,
+        69,
+        163,
+        46,
+        175,
+        114
       ]
     },
     {
@@ -3762,6 +6714,86 @@ export type Fade = {
       "code": 6053,
       "name": "destinationUnusable",
       "msg": "the owner's token account cannot receive yet"
+    },
+    {
+      "code": 6054,
+      "name": "wrongRound",
+      "msg": "the round is neither the accepting round nor the next one"
+    },
+    {
+      "code": 6055,
+      "name": "roundNotAccepting",
+      "msg": "the round accepts no more sponsorship"
+    },
+    {
+      "code": 6056,
+      "name": "roundCapacity",
+      "msg": "the round's liability would exceed what its paid share of the draw allows"
+    },
+    {
+      "code": 6057,
+      "name": "roundPaid",
+      "msg": "the round's draw is paid: no refund"
+    },
+    {
+      "code": 6058,
+      "name": "wrongRoundStatus",
+      "msg": "the round is not in the state this instruction needs"
+    },
+    {
+      "code": 6059,
+      "name": "refundWindow",
+      "msg": "the round's refund window has not opened"
+    },
+    {
+      "code": 6060,
+      "name": "roundRequestWindow",
+      "msg": "a round's draw may only be requested from two slots after its close until T_SETTLE"
+    },
+    {
+      "code": 6061,
+      "name": "drawUnderfunded",
+      "msg": "the live draw cost exceeds the round's prefund"
+    },
+    {
+      "code": 6062,
+      "name": "wrongPayoutTable",
+      "msg": "the payout table account does not match its hash or the ticket"
+    },
+    {
+      "code": 6063,
+      "name": "notCanceller",
+      "msg": "unused: kept so that the codes after it do not move"
+    },
+    {
+      "code": 6064,
+      "name": "shareAccountRequired",
+      "msg": "an integrator's first ticket must name its share account"
+    },
+    {
+      "code": 6065,
+      "name": "malformedBatch",
+      "msg": "the settlement accounts do not follow the ticket layout"
+    },
+    {
+      "code": 6066,
+      "name": "roundEpochClosed",
+      "msg": "a round counted before the epoch's close takes no join at or after that close"
+    },
+    {
+      "code": 6067,
+      "name": "notRoundParticipant",
+      "msg": "only a participant of the round, shown by its ticket, may refund it"
+    },
+    {
+      "code": 6068,
+      "name": "entropyUnrecorded",
+      "msg": "the entropy was never recorded and SlotHashes no longer proves it"
+    },
+    {
+      "code": 6069,
+      "name": "entropyStillProven",
+      "msg": "SlotHashes still proves the ticket's entropy: record it and expire the ticket"
     }
   ],
   "types": [
@@ -4218,11 +7250,19 @@ export type Fade = {
             "type": "i64"
           },
           {
+            "name": "appSharesAccrued",
+            "docs": [
+              "App shares of its settled and forfeited beacon tickets, not yet claimed",
+              "(Spec 08 §13.2.6); taken from the reserved tail."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                64
+                56
               ]
             }
           }
@@ -4429,6 +7469,124 @@ export type Fade = {
           {
             "name": "payout",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "payoutTable",
+      "docs": [
+        "A payout table stored once, at `[\"payout-table\", hash]` (Spec 08 §13.2.1).",
+        "Immutable and never closed: a beacon ticket stores its address instead of",
+        "its outcomes. It holds no share and no margin floor, which depend on the",
+        "ticket's app share and the live parameters and are checked at each join."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "len",
+            "type": "u8"
+          },
+          {
+            "name": "lhs",
+            "docs": [
+              "`Σ p·m` of the outcomes, from `payout_table::validate`."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "maxM",
+            "docs": [
+              "The largest multiplier, in bps."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "hash",
+            "docs": [
+              "`SHA256(\"FADE/PAYOUT-TABLE/v1\" ‖ len ‖ p₀ ‖ m₀ ‖ …)`, little-endian `u64`s."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "outcomes",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "outcome"
+                  }
+                },
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "payoutTableRegistered",
+      "docs": [
+        "`register_payout_table` created a payout table; a re-registration emits nothing."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "payoutTable",
+            "type": "pubkey"
+          },
+          {
+            "name": "hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "len",
+            "type": "u8"
+          },
+          {
+            "name": "lhs",
+            "type": "u128"
+          },
+          {
+            "name": "maxM",
+            "type": "u64"
+          },
+          {
+            "name": "outcomes",
+            "docs": [
+              "The `len` outcomes `hash` commits to, so the table is known from the events alone."
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "outcome"
+                }
+              }
+            }
           }
         ]
       }
@@ -4733,6 +7891,1065 @@ export type Fade = {
           {
             "name": "creditRateBps",
             "type": "u64"
+          },
+          {
+            "name": "beaconMinPrice",
+            "docs": [
+              "Smallest beacon ticket price, USDC base units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "beaconThreshold",
+            "docs": [
+              "`T_r`: the ticket prices that pay a round's whole draw, USDC base units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "roundK",
+            "docs": [
+              "`k`: per-ticket caps a paid round may carry; at most `MAX_ROUND_K`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "tickSlots",
+            "docs": [
+              "A paid round closes at the next multiple of `tick_slots`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "refundSlots",
+            "docs": [
+              "Slots after a round's latest join from which an unpaid round may be refunded."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "crankRoundSettleLamports",
+            "docs": [
+              "Settlement share of a beacon ticket, paid to whoever settles or returns it, lamports."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "round",
+      "docs": [
+        "One draw shared by the tickets that joined it, at `[\"round\", id]`",
+        "(Spec 08 §13.2.2). Prepays and sponsorship are held in its lamports."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vrfBump",
+            "docs": [
+              "Bump of `[\"round-vrf\", round]`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "roundStatus"
+              }
+            }
+          },
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "rentPayer",
+            "docs": [
+              "Advanced the round's rent; receives it, with the dust, at close."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "firstSlot",
+            "docs": [
+              "Slot of the first join."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "paidSlot",
+            "docs": [
+              "Slot in which the round became paid; 0 until then."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "closeSlot",
+            "docs": [
+              "First tick boundary after `paid_slot`; 0 until paid."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "threshold",
+            "docs": [
+              "`T_r`, USDC base units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "drawMax",
+            "docs": [
+              "`D_r`, lamports: two ORAO fees, a pending request's rent and the request share."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "roundK",
+            "type": "u8"
+          },
+          {
+            "name": "minPrice",
+            "type": "u64"
+          },
+          {
+            "name": "settleShare",
+            "type": "u64"
+          },
+          {
+            "name": "requestShare",
+            "type": "u64"
+          },
+          {
+            "name": "tickSlots",
+            "type": "u64"
+          },
+          {
+            "name": "refundSlots",
+            "type": "u64"
+          },
+          {
+            "name": "tSettleSlots",
+            "type": "u64"
+          },
+          {
+            "name": "drawdownBps",
+            "type": "u64"
+          },
+          {
+            "name": "prices",
+            "docs": [
+              "`R`: ticket prices of every ticket that joined."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "sponsorship",
+            "docs": [
+              "`S`: sponsorship received, lamports."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "liability",
+            "type": "u64"
+          },
+          {
+            "name": "credits",
+            "type": "u64"
+          },
+          {
+            "name": "protocolShares",
+            "type": "u64"
+          },
+          {
+            "name": "appShares",
+            "type": "u64"
+          },
+          {
+            "name": "prepaid",
+            "docs": [
+              "Prepays held on the round and not yet returned, lamports."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "usage",
+            "docs": [
+              "`U`: Σ of the tickets' capacity usage, `USAGE_SCALE` fixed point."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "tickets",
+            "docs": [
+              "Tickets joined and not yet settled or returned."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "sponsors",
+            "docs": [
+              "Sponsorships not yet reclaimed."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "counted",
+            "docs": [
+              "Recorded in the epoch counters."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "side",
+            "type": "u8"
+          },
+          {
+            "name": "generation",
+            "type": "u32"
+          },
+          {
+            "name": "randomness",
+            "docs": [
+              "The ORAO request account."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "seed",
+            "docs": [
+              "The round's seed and its entropy slot `s*`, recorded while SlotHashes",
+              "proves `s*` by `record_round_entropy`, `request_round_draw` or the",
+              "expiry that looked for its request; zero until then. Once recorded,",
+              "the round's ORAO request address no longer depends on SlotHashes."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "entropySlot",
+            "type": "u64"
+          },
+          {
+            "name": "funded",
+            "docs": [
+              "Lamports moved to `round_vrf` for the request."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "drawCost",
+            "docs": [
+              "`C`, fixed by the first settlement or the expiry."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "drawnRandomness",
+            "docs": [
+              "`R`, the request's randomness, kept by the first settlement; zero",
+              "until then. Every later batch reads it here, so that a drawn round",
+              "never depends on ORAO's account staying readable (invariant 10)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "lastJoinSlot",
+            "docs": [
+              "Slot of the latest join; the refund window counts from it (Spec 09 §6",
+              "as built). Taken from the spare tail: a round written before it reads",
+              "0, and `refund_from` then counts from `first_slot`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                24
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "rentPayer",
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundDrawRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "request",
+            "type": "pubkey"
+          },
+          {
+            "name": "seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "entropySlot",
+            "type": "u64"
+          },
+          {
+            "name": "entropyHash",
+            "docs": [
+              "`h*`; zero when the round's entropy was recorded before the request and",
+              "SlotHashes no longer holds `s*` (a late binding): `RoundEntropyRecorded`",
+              "carries it then."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "funded",
+            "type": "u64"
+          },
+          {
+            "name": "side",
+            "docs": [
+              "The epoch counter the round's tickets joined when it became paid, and",
+              "its generation; the request does not change them."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "generation",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundDrawn",
+      "docs": [
+        "The first settlement of a round read its randomness and fixed its draw cost."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "drawCost",
+            "type": "u64"
+          },
+          {
+            "name": "refund",
+            "docs": [
+              "Lamports drained back from `round_vrf`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundEntropyRecorded",
+      "docs": [
+        "A paid round's seed and entropy slot, recorded while SlotHashes proved `s*`:",
+        "its ORAO request address no longer depends on the sysvar."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "entropySlot",
+            "type": "u64"
+          },
+          {
+            "name": "entropyHash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundExpired",
+      "docs": [
+        "`requested` tells a keeper's failure (false) from a withheld draw (true)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "requested",
+            "type": "bool"
+          },
+          {
+            "name": "requestFound",
+            "docs": [
+              "An ORAO request exists for the round's seed: bound when `requested`, created",
+              "through ORAO by someone and never bound otherwise (pending or fulfilled with zero)."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "checked",
+            "docs": [
+              "The program could look for that request: always when `requested`; for a round",
+              "never requested, while SlotHashes still proved its entropy slot. The alarm reads a",
+              "keeper's failure only from `checked && !request_found`."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "tickets",
+            "type": "u32"
+          },
+          {
+            "name": "forfeited",
+            "docs": [
+              "Vault credits forfeited to the vault."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "drawCost",
+            "docs": [
+              "`C` (Spec 08 §13.4), which every forfeited return's charge depends on, and the",
+              "lamports drained back from `round_vrf` that fixed it; both 0 when unrequested."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "refund",
+            "type": "u64"
+          },
+          {
+            "name": "side",
+            "docs": [
+              "The epoch counter the round's tickets left and its generation, recorded when the",
+              "round became paid: no other event gives them for a round never requested."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "generation",
+            "type": "u32"
+          },
+          {
+            "name": "forfeitsWithheld",
+            "docs": [
+              "`Vault.forfeits_withheld` after this expiry: when it counts as one a withheld",
+              "draw may explain (all but `!requested && checked && !request_found`), its",
+              "ordinal in that count, which the keeper's alarm accounts for one by one."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "refunded",
+            "docs": [
+              "The round was refunded, not forfeited: never requested, its entropy never",
+              "recorded, and SlotHashes no longer proving it, so that whether its request",
+              "exists, fulfilled, can no longer be checked (`checked` false). Every ticket's",
+              "price and prepay go back at its return; `forfeited`, `draw_cost` and `refund`",
+              "are 0."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundOpened",
+      "docs": [
+        "A join created a round; the round's snapshot (Spec 09 §3)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "rentPayer",
+            "type": "pubkey"
+          },
+          {
+            "name": "threshold",
+            "type": "u64"
+          },
+          {
+            "name": "drawMax",
+            "type": "u64"
+          },
+          {
+            "name": "roundK",
+            "type": "u8"
+          },
+          {
+            "name": "minPrice",
+            "type": "u64"
+          },
+          {
+            "name": "settleShare",
+            "type": "u64"
+          },
+          {
+            "name": "tickSlots",
+            "type": "u64"
+          },
+          {
+            "name": "refundSlots",
+            "type": "u64"
+          },
+          {
+            "name": "firstSlot",
+            "type": "u64"
+          },
+          {
+            "name": "requestShare",
+            "type": "u64"
+          },
+          {
+            "name": "tSettleSlots",
+            "type": "u64"
+          },
+          {
+            "name": "drawdownBps",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundPaid",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "paidSlot",
+            "type": "u64"
+          },
+          {
+            "name": "closeSlot",
+            "type": "u64"
+          },
+          {
+            "name": "prices",
+            "type": "u64"
+          },
+          {
+            "name": "sponsorship",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundPayoutClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "ticket",
+            "type": "pubkey"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundRefunded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "by",
+            "type": "pubkey"
+          },
+          {
+            "name": "tickets",
+            "type": "u32"
+          },
+          {
+            "name": "prices",
+            "type": "u64"
+          },
+          {
+            "name": "sponsorship",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundSponsored",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports",
+            "type": "u64"
+          },
+          {
+            "name": "total",
+            "docs": [
+              "The round's sponsorship after this one."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundStatus",
+      "docs": [
+        "Where a round stands (Spec 08 §13.2.2). \"Closed\" is not a state: a `Paid`",
+        "round is closed from `close_slot` on, computed from the slot."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "accepting"
+          },
+          {
+            "name": "paid"
+          },
+          {
+            "name": "requested"
+          },
+          {
+            "name": "drawn"
+          },
+          {
+            "name": "refunded"
+          },
+          {
+            "name": "forfeited"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundTicket",
+      "docs": [
+        "A beacon ticket, at `[\"round-ticket\", integrator, nonce]` (Spec 08 §13.2.4).",
+        "Lean: the payout table is referenced by address, and everything common to",
+        "the round is on the round."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "roundTicketStatus"
+              }
+            }
+          },
+          {
+            "name": "round",
+            "docs": [
+              "The round's id."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "integrator",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "payer",
+            "docs": [
+              "Paid the rent, the prepay and the settlement share; gets back what is not spent."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "funder",
+            "docs": [
+              "Signed for the ticket price."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "refundTo",
+            "docs": [
+              "The funder's token account: where a refund returns the ticket price."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "beneficiary",
+            "docs": [
+              "Stored at the join, immutable: the only account a payout can go to."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "payoutTable",
+            "docs": [
+              "The `PayoutTable` account."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "price",
+            "type": "u64"
+          },
+          {
+            "name": "vaultCredit",
+            "type": "u64"
+          },
+          {
+            "name": "payoutMax",
+            "type": "u64"
+          },
+          {
+            "name": "liability",
+            "type": "u64"
+          },
+          {
+            "name": "protocolShare",
+            "type": "u64"
+          },
+          {
+            "name": "appShare",
+            "type": "u64"
+          },
+          {
+            "name": "prepay",
+            "docs": [
+              "Lamports held on the round for the draw."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "settleShare",
+            "docs": [
+              "Lamports held on this account above its rent, for whoever settles or returns it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "payout",
+            "docs": [
+              "Set when the payout or the return is parked."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundTicketReturned",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "ticket",
+            "type": "pubkey"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "refunded",
+            "docs": [
+              "A refunded round (the ticket price returned), or a forfeited one."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "price",
+            "type": "u64"
+          },
+          {
+            "name": "lamports",
+            "docs": [
+              "Lamports returned to the payer."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "parked",
+            "docs": [
+              "The ticket price went to `payout_escrow`: `refund_to` could not receive it."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "charge",
+            "docs": [
+              "The ticket's share of the draw, lamports: 0 after a refund."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundTicketSettled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "ticket",
+            "type": "pubkey"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "integrator",
+            "type": "pubkey"
+          },
+          {
+            "name": "outcome",
+            "type": "u8"
+          },
+          {
+            "name": "payout",
+            "type": "u64"
+          },
+          {
+            "name": "charge",
+            "docs": [
+              "The ticket's share of the draw, lamports."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pending",
+            "docs": [
+              "The payout went to `payout_escrow`: the beneficiary could not receive it."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundTicketStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "joined"
+          },
+          {
+            "name": "payoutParked"
+          },
+          {
+            "name": "returnParked"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roundVrfSwept",
+      "docs": [
+        "Lamports that reached a round's `round_vrf` after its last drain (ORAO's rent",
+        "refund for a request fulfilled after the round forfeited, or a transfer), swept."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "docs": [
+              "The round's address, whether it still exists or not."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "roundId",
+            "type": "u64"
+          },
+          {
+            "name": "to",
+            "docs": [
+              "The round while it exists (its close pays them to `rent_payer`), the caller",
+              "once it has closed."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports",
+            "type": "u64"
+          },
+          {
+            "name": "closed",
+            "docs": [
+              "The round had closed: `to` is the caller."
+            ],
+            "type": "bool"
           }
         ]
       }
@@ -4785,6 +9002,92 @@ export type Fade = {
           {
             "name": "uri",
             "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sharesClaimed",
+      "docs": [
+        "`integrator` is the default key for the protocol's shares."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "integrator",
+            "type": "pubkey"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sponsorship",
+      "docs": [
+        "One sponsor's lamports in one round, at `[\"sponsorship\", round, sponsor]`",
+        "(Spec 08 §13.2.5). A second sponsorship by the same sponsor tops it up."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "docs": [
+              "The round's id."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sponsorshipReclaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports",
+            "type": "u64"
           }
         ]
       }
@@ -4925,6 +9228,10 @@ export type Fade = {
           },
           {
             "name": "entropySlot",
+            "docs": [
+              "`s*`, `h*` and the ORAO seed, recorded by `record_ticket_entropy` or",
+              "`request_randomness`; all zero until then."
+            ],
             "type": "u64"
           },
           {
@@ -4947,12 +9254,16 @@ export type Fade = {
           },
           {
             "name": "outcome",
+            "docs": [
+              "The outcome drawn, or `REFUND_OUTCOME` for a refund parked in",
+              "`payout_escrow`; 0 until either."
+            ],
             "type": "u8"
           },
           {
             "name": "payout",
             "docs": [
-              "Set when the payout waits in `payout_escrow`."
+              "Set when the payout (or the refunded credit) waits in `payout_escrow`."
             ],
             "type": "u64"
           },
@@ -4977,7 +9288,54 @@ export type Fade = {
       }
     },
     {
+      "name": "ticketEntropyRecorded",
+      "docs": [
+        "An Open direct ticket's seed and entropy slot, recorded while SlotHashes",
+        "proved `s*`: its ORAO request address no longer depends on the sysvar."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "ticket",
+            "type": "pubkey"
+          },
+          {
+            "name": "seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "entropySlot",
+            "type": "u64"
+          },
+          {
+            "name": "entropyHash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "ticketExpired",
+      "docs": [
+        "A direct ticket's expiry: forfeited by `expire_ticket`, or refunded by",
+        "`refund_expired_ticket`. Version 2 (`TICKET_EXPIRED_VERSION`); a version-1",
+        "body ends after `forfeited`."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -4995,6 +9353,175 @@ export type Fade = {
           },
           {
             "name": "forfeited",
+            "docs": [
+              "The vault credit forfeited to the vault; 0 for a refund."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "requested",
+            "docs": [
+              "The ticket's randomness was requested: its bound request was pending or",
+              "fulfilled with zero."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "requestFound",
+            "docs": [
+              "An ORAO request exists at the ticket's seed: bound when `requested`,",
+              "created through ORAO by someone and never bound otherwise (pending or",
+              "fulfilled with zero)."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "checked",
+            "docs": [
+              "The program could look for that request: always for a forfeiture,",
+              "never for a refund. The alarm reads a keeper's failure only from",
+              "`checked && !request_found`."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "pending",
+            "docs": [
+              "The bound request was still pending and `vrf_payer` paid its rent, so",
+              "ORAO's rent refund reaches `vrf_payer` when it fulfils it, after the",
+              "ticket's close, and `sweep_ticket_vrf` moves it then. False for a",
+              "request someone else created and the ticket bound: ORAO refunds its",
+              "creator."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "refunded",
+            "docs": [
+              "The ticket was refunded, not forfeited: never requested, its seed never",
+              "recorded, and SlotHashes no longer proving it."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "refund",
+            "docs": [
+              "The vault credit returned to the beneficiary (or parked in",
+              "`payout_escrow`); 0 unless `refunded`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "parked",
+            "docs": [
+              "The refund waits in `payout_escrow` for `claim_payout`: the beneficiary",
+              "could not receive it. The ticket stays, `PayoutPending` with `outcome`",
+              "`REFUND_OUTCOME`."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "ticketForfeitsWithheld",
+            "docs": [
+              "`Vault.ticket_forfeits_withheld` after this expiry: when it counts as",
+              "one a withheld draw may explain (all but `!requested && checked &&",
+              "!request_found`), its ordinal in that count."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ticketJoined",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "ticket",
+            "type": "pubkey"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "integrator",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "beneficiary",
+            "type": "pubkey"
+          },
+          {
+            "name": "refundTo",
+            "type": "pubkey"
+          },
+          {
+            "name": "payoutTable",
+            "type": "pubkey"
+          },
+          {
+            "name": "price",
+            "type": "u64"
+          },
+          {
+            "name": "vaultCredit",
+            "type": "u64"
+          },
+          {
+            "name": "payoutMax",
+            "type": "u64"
+          },
+          {
+            "name": "reservedLiability",
+            "type": "u64"
+          },
+          {
+            "name": "cap",
+            "docs": [
+              "The per-ticket cap admission applied, and the capacity usage against it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "usage",
+            "type": "u64"
+          },
+          {
+            "name": "protocolShare",
+            "type": "u64"
+          },
+          {
+            "name": "appShare",
+            "type": "u64"
+          },
+          {
+            "name": "prepay",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "funder",
+            "type": "pubkey"
+          },
+          {
+            "name": "settleShare",
             "type": "u64"
           }
         ]
@@ -5108,6 +9635,46 @@ export type Fade = {
           },
           {
             "name": "payoutPending"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ticketVrfSwept",
+      "docs": [
+        "Lamports that reached a closed direct ticket's `vrf_payer` (ORAO's rent",
+        "refund for a request fulfilled after the ticket expired, or a transfer),",
+        "swept to the caller."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "ticket",
+            "docs": [
+              "The ticket's address; the ticket no longer exists."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "integrator",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "to",
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports",
+            "type": "u64"
           }
         ]
       }
@@ -5230,11 +9797,84 @@ export type Fade = {
             "type": "u64"
           },
           {
+            "name": "acceptingRound",
+            "docs": [
+              "Id of the round accepting tickets, or 0."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "nextRoundId",
+            "docs": [
+              "Id the next round created receives; starts at 1."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "beaconSharesHeld",
+            "docs": [
+              "Protocol and app shares of beacon tickets joined and not yet settled,",
+              "returned or forfeited: in `vault_usdc`, outside `total_assets`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "protocolSharesAccrued",
+            "docs": [
+              "Protocol shares of settled and forfeited beacon tickets, not yet claimed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "appSharesOwed",
+            "docs": [
+              "`Σ Integrator.app_shares_accrued`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "beaconReturnsOwed",
+            "docs": [
+              "Ticket prices of refunded rounds' tickets not yet returned."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "roundsForfeited",
+            "docs": [
+              "Rounds `expire_round` has forfeited, ever."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "forfeitsWithheld",
+            "docs": [
+              "The expiries a withheld draw may explain: every forfeiture but one of",
+              "a round never requested whose request the program looked for and did",
+              "not find (`RoundExpired`'s `!requested && checked && !request_found`,",
+              "the keepers' failure), and every round `expire_round` refunded because",
+              "its entropy was never recorded and SlotHashes no longer proves it",
+              "(`RoundExpired.refunded`). A durable count, so that an alarm never has",
+              "to infer a withheld draw from transaction history it could not read."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ticketForfeitsWithheld",
+            "docs": [
+              "The direct expiries a withheld draw may explain, by the same rule as",
+              "`forfeits_withheld` (`TicketExpired`'s `requested || request_found ||",
+              "!checked`, every refund included), kept apart so that each path's",
+              "alarm accounts for its own ordinals. Taken from the reserved tail."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                112
+                40
               ]
             }
           }
@@ -5384,6 +10024,22 @@ export type Fade = {
   ],
   "constants": [
     {
+      "name": "beaconOutcomeTag",
+      "docs": [
+        "Domain tag of a beacon ticket's outcome; equal to `fade_math::beacon::OUTCOME_TAG`."
+      ],
+      "type": "bytes",
+      "value": "[70, 65, 68, 69, 47, 66, 69, 65, 67, 79, 78, 45, 79, 85, 84, 67, 79, 77, 69, 47, 118, 49]"
+    },
+    {
+      "name": "beaconSeedTag",
+      "docs": [
+        "Domain tag of a round's ORAO seed; equal to `fade_math::beacon::SEED_TAG`."
+      ],
+      "type": "bytes",
+      "value": "[70, 65, 68, 69, 47, 66, 69, 65, 67, 79, 78, 45, 83, 69, 69, 68, 47, 118, 49]"
+    },
+    {
       "name": "configSeed",
       "type": "bytes",
       "value": "[99, 111, 110, 102, 105, 103]"
@@ -5430,6 +10086,26 @@ export type Fade = {
       "value": "[105, 110, 116, 101, 103, 114, 97, 116, 111, 114]"
     },
     {
+      "name": "maxRoundBatch",
+      "docs": [
+        "Most tickets one `settle_round_tickets` may name: one bit of its `wins`",
+        "mask each (Spec 08 §13.5.7). Transaction size binds well below it."
+      ],
+      "type": "u8",
+      "value": "32"
+    },
+    {
+      "name": "maxRoundK",
+      "docs": [
+        "The most per-ticket caps a round may carry (Spec 08 §13.3). A program",
+        "constant, so that raising `k` takes an upgrade behind the 72-hour",
+        "timelock rather than a parameter change: Spec 09 §7 ties it to stronger",
+        "randomness, itself an upgrade."
+      ],
+      "type": "u8",
+      "value": "1"
+    },
+    {
       "name": "payableSeed",
       "docs": [
         "Assets struck withdrawals are owed, not yet claimed."
@@ -5446,12 +10122,66 @@ export type Fade = {
       "value": "[112, 97, 121, 111, 117, 116, 45, 101, 115, 99, 114, 111, 119]"
     },
     {
+      "name": "payoutTableSeed",
+      "docs": [
+        "`[\"payout-table\", hash]`: a payout table stored once, referenced by beacon tickets."
+      ],
+      "type": "bytes",
+      "value": "[112, 97, 121, 111, 117, 116, 45, 116, 97, 98, 108, 101]"
+    },
+    {
+      "name": "payoutTableTag",
+      "docs": [
+        "Domain tag of a payout table's hash (Spec 08 §13.2.1); equal to",
+        "`fade_math::beacon::PAYOUT_TABLE_TAG`."
+      ],
+      "type": "bytes",
+      "value": "[70, 65, 68, 69, 47, 80, 65, 89, 79, 85, 84, 45, 84, 65, 66, 76, 69, 47, 118, 49]"
+    },
+    {
       "name": "queueSeed",
       "docs": [
         "The liquidity-provider side's state; its lamports above rent are the strike fund."
       ],
       "type": "bytes",
       "value": "[113, 117, 101, 117, 101]"
+    },
+    {
+      "name": "refundOutcome",
+      "docs": [
+        "`Ticket.outcome` of a refund parked in `payout_escrow`: no payout table",
+        "holds this index (32 outcomes at most), so a `PayoutPending` ticket",
+        "carrying it is a refunded credit waiting for `claim_payout`, never a",
+        "settlement. `u8::MAX`, written out so that the IDL and the generated",
+        "clients carry the value."
+      ],
+      "type": "u8",
+      "value": "255"
+    },
+    {
+      "name": "roundSeed",
+      "docs": [
+        "`[\"round\", round_id]`, `round_id` little-endian `u64`."
+      ],
+      "type": "bytes",
+      "value": "[114, 111, 117, 110, 100]"
+    },
+    {
+      "name": "roundTicketSeed",
+      "docs": [
+        "`[\"round-ticket\", integrator, nonce]`: the nonce is the integrator's",
+        "`next_nonce`, shared with the direct path."
+      ],
+      "type": "bytes",
+      "value": "[114, 111, 117, 110, 100, 45, 116, 105, 99, 107, 101, 116]"
+    },
+    {
+      "name": "roundVrfSeed",
+      "docs": [
+        "`[\"round-vrf\", round]`: the system-owned PDA that pays ORAO for a round's draw."
+      ],
+      "type": "bytes",
+      "value": "[114, 111, 117, 110, 100, 45, 118, 114, 102]"
     },
     {
       "name": "shareClaimsSeed",
@@ -5467,6 +10197,14 @@ export type Fade = {
       "name": "shareMintSeed",
       "type": "bytes",
       "value": "[115, 104, 97, 114, 101, 115]"
+    },
+    {
+      "name": "sponsorshipSeed",
+      "docs": [
+        "`[\"sponsorship\", round, sponsor]`."
+      ],
+      "type": "bytes",
+      "value": "[115, 112, 111, 110, 115, 111, 114, 115, 104, 105, 112]"
     },
     {
       "name": "ticketSeed",

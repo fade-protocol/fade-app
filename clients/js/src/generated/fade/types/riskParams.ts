@@ -46,7 +46,19 @@ minDeposit: bigint;
 /** Smallest withdrawal request, in share base units, unless it is the owner's whole balance. */
 minWithdrawShares: bigint; 
 /** Smallest deposit while no share exists. */
-minFirstDeposit: bigint; creditEnabled: boolean; creditBase: bigint; creditRateBps: bigint;  };
+minFirstDeposit: bigint; creditEnabled: boolean; creditBase: bigint; creditRateBps: bigint; 
+/** Smallest beacon ticket price, USDC base units. */
+beaconMinPrice: bigint; 
+/** `T_r`: the ticket prices that pay a round's whole draw, USDC base units. */
+beaconThreshold: bigint; 
+/** `k`: per-ticket caps a paid round may carry; at most `MAX_ROUND_K`. */
+roundK: bigint; 
+/** A paid round closes at the next multiple of `tick_slots`. */
+tickSlots: bigint; 
+/** Slots after a round's latest join from which an unpaid round may be refunded. */
+refundSlots: bigint; 
+/** Settlement share of a beacon ticket, paid to whoever settles or returns it, lamports. */
+crankRoundSettleLamports: bigint;  };
 
 export type RiskParamsArgs = { 
 /** Fraction of the Kelly-optimal liability a ticket may take, in bps. */
@@ -82,14 +94,26 @@ minDeposit: number | bigint;
 /** Smallest withdrawal request, in share base units, unless it is the owner's whole balance. */
 minWithdrawShares: number | bigint; 
 /** Smallest deposit while no share exists. */
-minFirstDeposit: number | bigint; creditEnabled: boolean; creditBase: number | bigint; creditRateBps: number | bigint;  };
+minFirstDeposit: number | bigint; creditEnabled: boolean; creditBase: number | bigint; creditRateBps: number | bigint; 
+/** Smallest beacon ticket price, USDC base units. */
+beaconMinPrice: number | bigint; 
+/** `T_r`: the ticket prices that pay a round's whole draw, USDC base units. */
+beaconThreshold: number | bigint; 
+/** `k`: per-ticket caps a paid round may carry; at most `MAX_ROUND_K`. */
+roundK: number | bigint; 
+/** A paid round closes at the next multiple of `tick_slots`. */
+tickSlots: number | bigint; 
+/** Slots after a round's latest join from which an unpaid round may be refunded. */
+refundSlots: number | bigint; 
+/** Settlement share of a beacon ticket, paid to whoever settles or returns it, lamports. */
+crankRoundSettleLamports: number | bigint;  };
 
 export function getRiskParamsEncoder(): FixedSizeEncoder<RiskParamsArgs> {
-    return getStructEncoder([['kellyFractionBps', getU64Encoder()], ['censorshipBps', getU64Encoder()], ['whaleBps', getU64Encoder()], ['utilisationBreakerBps', getU64Encoder()], ['kappaBps', getU64Encoder()], ['drawdownBps', getU64Encoder()], ['minPrice', getU64Encoder()], ['maxPrice', getU64Encoder()], ['minVaultMarginBps', getU64Encoder()], ['protocolShareBps', getU64Encoder()], ['maxAppShareBps', getU64Encoder()], ['tSettleSlots', getU64Encoder()], ['crankRequestLamports', getU64Encoder()], ['crankSettleLamports', getU64Encoder()], ['epochLengthSeconds', getU64Encoder()], ['claimFeeLamports', getU64Encoder()], ['strikeFeeLamports', getU64Encoder()], ['strikeRewardLamports', getU64Encoder()], ['fundTargetLamports', getU64Encoder()], ['minDeposit', getU64Encoder()], ['minWithdrawShares', getU64Encoder()], ['minFirstDeposit', getU64Encoder()], ['creditEnabled', getBooleanEncoder()], ['creditBase', getU64Encoder()], ['creditRateBps', getU64Encoder()]]);
+    return getStructEncoder([['kellyFractionBps', getU64Encoder()], ['censorshipBps', getU64Encoder()], ['whaleBps', getU64Encoder()], ['utilisationBreakerBps', getU64Encoder()], ['kappaBps', getU64Encoder()], ['drawdownBps', getU64Encoder()], ['minPrice', getU64Encoder()], ['maxPrice', getU64Encoder()], ['minVaultMarginBps', getU64Encoder()], ['protocolShareBps', getU64Encoder()], ['maxAppShareBps', getU64Encoder()], ['tSettleSlots', getU64Encoder()], ['crankRequestLamports', getU64Encoder()], ['crankSettleLamports', getU64Encoder()], ['epochLengthSeconds', getU64Encoder()], ['claimFeeLamports', getU64Encoder()], ['strikeFeeLamports', getU64Encoder()], ['strikeRewardLamports', getU64Encoder()], ['fundTargetLamports', getU64Encoder()], ['minDeposit', getU64Encoder()], ['minWithdrawShares', getU64Encoder()], ['minFirstDeposit', getU64Encoder()], ['creditEnabled', getBooleanEncoder()], ['creditBase', getU64Encoder()], ['creditRateBps', getU64Encoder()], ['beaconMinPrice', getU64Encoder()], ['beaconThreshold', getU64Encoder()], ['roundK', getU64Encoder()], ['tickSlots', getU64Encoder()], ['refundSlots', getU64Encoder()], ['crankRoundSettleLamports', getU64Encoder()]]);
 }
 
 export function getRiskParamsDecoder(): FixedSizeDecoder<RiskParams> {
-    return getStructDecoder([['kellyFractionBps', getU64Decoder()], ['censorshipBps', getU64Decoder()], ['whaleBps', getU64Decoder()], ['utilisationBreakerBps', getU64Decoder()], ['kappaBps', getU64Decoder()], ['drawdownBps', getU64Decoder()], ['minPrice', getU64Decoder()], ['maxPrice', getU64Decoder()], ['minVaultMarginBps', getU64Decoder()], ['protocolShareBps', getU64Decoder()], ['maxAppShareBps', getU64Decoder()], ['tSettleSlots', getU64Decoder()], ['crankRequestLamports', getU64Decoder()], ['crankSettleLamports', getU64Decoder()], ['epochLengthSeconds', getU64Decoder()], ['claimFeeLamports', getU64Decoder()], ['strikeFeeLamports', getU64Decoder()], ['strikeRewardLamports', getU64Decoder()], ['fundTargetLamports', getU64Decoder()], ['minDeposit', getU64Decoder()], ['minWithdrawShares', getU64Decoder()], ['minFirstDeposit', getU64Decoder()], ['creditEnabled', getBooleanDecoder()], ['creditBase', getU64Decoder()], ['creditRateBps', getU64Decoder()]]);
+    return getStructDecoder([['kellyFractionBps', getU64Decoder()], ['censorshipBps', getU64Decoder()], ['whaleBps', getU64Decoder()], ['utilisationBreakerBps', getU64Decoder()], ['kappaBps', getU64Decoder()], ['drawdownBps', getU64Decoder()], ['minPrice', getU64Decoder()], ['maxPrice', getU64Decoder()], ['minVaultMarginBps', getU64Decoder()], ['protocolShareBps', getU64Decoder()], ['maxAppShareBps', getU64Decoder()], ['tSettleSlots', getU64Decoder()], ['crankRequestLamports', getU64Decoder()], ['crankSettleLamports', getU64Decoder()], ['epochLengthSeconds', getU64Decoder()], ['claimFeeLamports', getU64Decoder()], ['strikeFeeLamports', getU64Decoder()], ['strikeRewardLamports', getU64Decoder()], ['fundTargetLamports', getU64Decoder()], ['minDeposit', getU64Decoder()], ['minWithdrawShares', getU64Decoder()], ['minFirstDeposit', getU64Decoder()], ['creditEnabled', getBooleanDecoder()], ['creditBase', getU64Decoder()], ['creditRateBps', getU64Decoder()], ['beaconMinPrice', getU64Decoder()], ['beaconThreshold', getU64Decoder()], ['roundK', getU64Decoder()], ['tickSlots', getU64Decoder()], ['refundSlots', getU64Decoder()], ['crankRoundSettleLamports', getU64Decoder()]]);
 }
 
 export function getRiskParamsCodec(): FixedSizeCodec<RiskParamsArgs, RiskParams> {

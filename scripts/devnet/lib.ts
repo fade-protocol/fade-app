@@ -46,12 +46,22 @@ import {
   getFadeErrorMessage,
   type FadeError,
 } from "../../clients/js/src/generated/fade/index.ts";
+import {
+  getRecordTicketEntropyInstruction,
+  type Ticket,
+} from "../../clients/js/src/generated/fade/index.ts";
+import { ticketEntropyRecorded, ticketRequestAddress } from "../../clients/js/src/direct/index.ts";
 
 export const RPC_URL = process.env["RPC_URL"] ?? "https://api.devnet.solana.com";
 export const WS_URL = process.env["WS_URL"] ?? RPC_URL.replace(/^http/, "ws");
 
-/** The devnet deployment (feature `devnet`, keys/devnet-fade-program.json). */
-export const PROGRAM = address("GqWqMEubSHgrqJCZ9zPfMHq6uQPZkr6EbiBy78j7engt");
+/**
+ * The live devnet deployment (feature `devnet`, keys/devnet-fade-program.json):
+ * one program carrying both the direct path and the shared beacon.
+ */
+export const LIVE_PROGRAM = address("GqWqMEubSHgrqJCZ9zPfMHq6uQPZkr6EbiBy78j7engt");
+/** The program every devnet script acts on: the live deployment. */
+export const PROGRAM = LIVE_PROGRAM;
 /** The Fade-controlled test mint the devnet build pins (keys/devnet-usdc-mint.json). */
 export const USDC_MINT = address("E4XYMYALrvMX19P6TxqKXe8ZYGxfj2CjMub6c2ZficTv");
 export const USDC = 1_000_000n;
@@ -134,20 +144,22 @@ export const loadDeployer = () => loadKeypair("deployer.json");
 
 const cfg = { programAddress: PROGRAM };
 
-export async function fadePdas() {
-  const [config] = await findConfigPda(cfg);
-  const [vault] = await findVaultPda(cfg);
-  const [queue] = await findQueuePda(cfg);
-  const [vaultAuthority] = await findVaultAuthorityPda(cfg);
-  const [vaultUsdc] = await findVaultUsdcPda(cfg);
-  const [shareMint] = await findShareMintPda(cfg);
+/** The PDAs of `program`: the instance the scripts act on unless another is named (a read-only check). */
+export async function fadePdas(program: Address = PROGRAM) {
+  const at = { programAddress: program };
+  const [config] = await findConfigPda(at);
+  const [vault] = await findVaultPda(at);
+  const [queue] = await findQueuePda(at);
+  const [vaultAuthority] = await findVaultAuthorityPda(at);
+  const [vaultUsdc] = await findVaultUsdcPda(at);
+  const [shareMint] = await findShareMintPda(at);
   const [eventAuthority] = await getProgramDerivedAddress({
-    programAddress: PROGRAM,
+    programAddress: program,
     seeds: ["__event_authority"],
   });
   const [programData] = await getProgramDerivedAddress({
     programAddress: LOADER,
-    seeds: [bytes(PROGRAM)],
+    seeds: [bytes(program)],
   });
   return {
     config,
@@ -214,6 +226,32 @@ export async function accountOwner(addr: Address): Promise<Address | null> {
     .getAccountInfo(addr, { encoding: "base64", commitment: "confirmed" })
     .send();
   return value ? value.owner : null;
+}
+
+/**
+ * What an Open direct ticket past its expiry names: the request address derived from its seed
+ * (recorded, else proven by SlotHashes), with `record_ticket_entropy` to send first when the
+ * seed is not recorded yet; null once the seed can no longer be derived
+ * (`refund_expired_ticket` is then its end).
+ */
+export async function openExpiryAccounts(
+  ticket: Address,
+  w: Ticket,
+  program: Address = PROGRAM,
+): Promise<{ randomness: Address; record: Instruction | null } | null> {
+  const hashes = await accountData(SLOT_HASHES);
+  if (!hashes) throw new Error("SlotHashes unreadable");
+  const found = await ticketRequestAddress({ address: ticket, data: w }, hashes, {
+    programAddress: program,
+  });
+  if (!found) return null;
+  const record = ticketEntropyRecorded(w)
+    ? null
+    : getRecordTicketEntropyInstruction(
+        { ticket, eventAuthority: (await fadePdas(program)).eventAuthority, program },
+        { programAddress: program },
+      );
+  return { randomness: found.request, record };
 }
 
 /** Amount of an SPL token account, or null if it is not one. */
@@ -376,14 +414,30 @@ function logsOf(e: unknown): string[] {
 
 export type Sent = { signature: Signature; slot: bigint; link: string };
 
-/** Sends, waits for `confirmed`, prints the explorer link. Throws a SendError with the logs on failure. */
-export async function send(
-  payer: KeyPairSigner,
-  instructions: Instruction[],
-  label: string,
-  units = 400_000,
-): Promise<Sent> {
-  const tx = await build(payer, instructions, units);
+type SignedTransaction = Parameters<typeof getBase64EncodedWireTransaction>[0] &
+  Parameters<typeof getSignatureFromTransaction>[0];
+
+/** A landed transaction's meta, whatever its version (v1 included), or null. */
+export async function transactionMeta(signature: Signature) {
+  for (const version of [1, 0] as const) {
+    try {
+      const t = await rpc
+        .getTransaction(signature, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: version,
+          encoding: "json",
+        })
+        .send();
+      if (t) return t;
+    } catch {
+      // an RPC that does not know version 1 refuses the parameter: try 0
+    }
+  }
+  return null;
+}
+
+/** Sends a signed transaction, waits for `confirmed`, prints the link; a SendError with the logs on failure. */
+async function sendSigned(tx: SignedTransaction, label: string): Promise<Sent> {
   const signature = getSignatureFromTransaction(tx);
   try {
     await sendAndPoll(tx);
@@ -391,14 +445,7 @@ export async function send(
     let logs = logsOf(e);
     if (!logs.length) {
       // Landed but failed, or failed preflight without logs: ask the cluster.
-      const t = await rpc
-        .getTransaction(signature, {
-          commitment: "confirmed",
-          maxSupportedTransactionVersion: 0,
-          encoding: "json",
-        })
-        .send()
-        .catch(() => null);
+      const t = await transactionMeta(signature).catch(() => null);
       logs = (t?.meta?.logMessages as string[] | undefined) ?? [];
     }
     throw new SendError(label, logs, customErrorCode(e), e);
@@ -408,6 +455,34 @@ export async function send(
   const link = explorerTx(signature);
   console.log(`  ✓ ${label}: ${link} (slot ${slot})`);
   return { signature, slot, link };
+}
+
+/** Sends, waits for `confirmed`, prints the explorer link. Throws a SendError with the logs on failure. */
+export async function send(
+  payer: KeyPairSigner,
+  instructions: Instruction[],
+  label: string,
+  units = 400_000,
+): Promise<Sent> {
+  return sendSigned(await build(payer, instructions, units), label);
+}
+
+/**
+ * Signs `message` (any version, v1 included) with the signers its fee payer
+ * and instructions carry, on a fresh blockhash, then sends it as `send` does.
+ * Its wire size is returned with it.
+ */
+export async function sendMessage(
+  message: Parameters<typeof setTransactionMessageLifetimeUsingBlockhash>[1] &
+    Parameters<typeof signTransactionMessageWithSigners>[0],
+  label: string,
+): Promise<Sent & { wireBytes: number }> {
+  const { value: blockhash } = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
+  const fresh = setTransactionMessageLifetimeUsingBlockhash(blockhash, message);
+  const tx = await signTransactionMessageWithSigners(fresh);
+  assertIsTransactionWithBlockhashLifetime(tx);
+  const wireBytes = getBase64Encoder().encode(getBase64EncodedWireTransaction(tx)).length;
+  return { ...(await sendSigned(tx, label)), wireBytes };
 }
 
 /** Simulates without sending: returns the error and logs (null error = would succeed). */

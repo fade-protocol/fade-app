@@ -12,7 +12,7 @@ import {
 /** The booster's worst case is a premium pack: ten packs, five hundred add-ons (lib/payoutTables). */
 export const BOOSTER_PAYOUT = PACK_TICKETS * PREMIUM_PACKS;
 
-export type TicketKind = "Checkout" | "Swap" | "Booster" | "Ticket";
+export type TicketKind = "Checkout" | "Swap" | "Booster" | "Small ticket" | "Ticket";
 
 /**
  * What a checkout ticket's win sends back, read from its worst case: the whole cart, half of it,
@@ -29,11 +29,16 @@ export function checkoutBackOf(r: { price: bigint; payoutMax: bigint }): Checkou
 }
 
 /**
- * Which demo a ticket came from, by the shape of its worst case: the booster's is a premium
- * pack, five hundred tickets; the checkout's the cart (or half or a tenth of it) plus the ticket;
- * any other win-back is a swap. Tickets of other apps read as "Ticket".
+ * Which demo a ticket came from. A ticket of the shared beacon (`beacon` set: it joined a round)
+ * is the beacon demo's small ticket. A direct ticket reads by the shape of its worst case: the
+ * booster's is a premium pack, five hundred tickets; the checkout's the cart (or half or a tenth
+ * of it) plus the ticket; any other win-back is a swap. Tickets of other apps read as "Ticket".
  */
-export function kindOf(r: { price: bigint; payoutMax: bigint }, demoApp: boolean): TicketKind {
+export function kindOf(
+  r: { price: bigint; payoutMax: bigint; beacon?: unknown },
+  demoApp: boolean,
+): TicketKind {
+  if (r.beacon) return demoApp ? "Small ticket" : "Ticket";
   if (r.payoutMax === r.price * BOOSTER_PAYOUT) return "Booster";
   if (checkoutBackOf(r) !== null) return "Checkout";
   return demoApp ? "Swap" : "Ticket";

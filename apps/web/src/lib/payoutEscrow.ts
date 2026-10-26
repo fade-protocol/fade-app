@@ -1,8 +1,11 @@
-// A win the settlement could not deliver: the beneficiary's USDC account was missing, frozen or
-// not a USDC account, so the payout waits in the program's escrow and the ticket stays open as
-// PayoutPending. `claim_payout` (permissionless) delivers it to that same account once it can
-// receive. The wallet's ticket log only tells that a payout was parked; whether it still waits,
-// and whether a claim would go through now, is read from the chain here.
+// What a ticket's end could not deliver: the beneficiary's USDC account was missing, frozen or
+// not a USDC account, so the payout waits in the program's escrow and the ticket stays open. A
+// direct ticket stays PayoutPending until `claim_payout` delivers it; a beacon ticket stays
+// PayoutParked, or ReturnParked for a refunded round's ticket price that its funder's account
+// could not receive, until `claim_round_payout` does. Both claims are permissionless and pay
+// that same account once it can receive. The wallet's ticket log only tells that something was
+// parked; whether it still waits, and whether a claim would go through now, is read from the
+// chain here.
 import {
   fetchEncodedAccounts,
   getAddressDecoder,
@@ -10,10 +13,14 @@ import {
   type Instruction,
   type TransactionSigner,
 } from "@solana/kit";
+import { getBeaconClaimPayoutInstructionAsync } from "../../../../clients/js/src/beacon/index.ts";
 import {
+  decodeRoundTicket,
   decodeTicket,
   getClaimPayoutInstructionAsync,
+  RoundTicketStatus,
   TicketStatus,
+  type RoundTicket,
   type Ticket,
 } from "../../../../clients/js/src/generated/fade";
 import { PROGRAM, PROGRAM_CONFIG, TOKEN_PROGRAM, USDC_MINT } from "./config";
@@ -45,16 +52,32 @@ export function receiverOf(
 }
 
 /**
- * Where a parked payout stands:
- * - `claimable`: the ticket still holds it and its beneficiary can receive now, or is the
- *   wallet's own USDC account, missing, which the claim creates first (`createAccount`);
+ * Where a parked payout (or a parked beacon return) stands:
+ * - `claimable`: the ticket still holds it and its destination can receive now, or is the
+ *   wallet's own USDC account, missing, which the claim creates first (`createAccount`); a
+ *   direct ticket carries `ticket`, a beacon one `roundTicket`;
  * - `blocked`: it still waits, but a claim would fail (frozen, or not a USDC account);
- * - `claimed`: the ticket is closed, so the payout was delivered.
+ * - `claimed`: the ticket is closed, so what it held was delivered.
  */
 export type Escrow =
   | { state: "claimable"; createAccount: boolean; ticket: Ticket }
+  | { state: "claimable"; createAccount: boolean; roundTicket: RoundTicket }
   | { state: "blocked"; receiver: Receiver }
   | { state: "claimed" };
+
+type Claimable = Extract<Escrow, { state: "claimable" }>;
+
+/** Where it stands once the ticket is known to still hold something parked. */
+function parkedEscrow(
+  holder: { ticket: Ticket } | { roundTicket: RoundTicket },
+  receiver: Receiver,
+  ownAccount: boolean,
+): Escrow {
+  if (receiver === "ok") return { state: "claimable", createAccount: false, ...holder };
+  if (receiver === "missing" && ownAccount)
+    return { state: "claimable", createAccount: true, ...holder };
+  return { state: "blocked", receiver };
+}
 
 export function escrowOf(
   ticket: Ticket | null,
@@ -64,50 +87,118 @@ export function escrowOf(
 ): Escrow | null {
   if (!ticket) return { state: "claimed" };
   if (ticket.status !== TicketStatus.PayoutPending) return null;
-  if (receiver === "ok") return { state: "claimable", createAccount: false, ticket };
-  if (receiver === "missing" && ownAccount)
-    return { state: "claimable", createAccount: true, ticket };
-  return { state: "blocked", receiver };
+  return parkedEscrow({ ticket }, receiver, ownAccount);
 }
 
-/** Tickets whose settlement parked a payout. */
-export const parkedPayouts = (rows: readonly TicketRow[]) =>
-  rows.filter((r) => r.end?.kind === "settled" && r.end.pending && r.end.payout > 0n);
+/** Where a beacon ticket's parked payout or return stands; `receiver` is its destination's. */
+export function roundEscrowOf(
+  roundTicket: RoundTicket | null,
+  receiver: Receiver,
+  /** The destination is the wallet's own USDC account (its associated token account). */
+  ownAccount: boolean,
+): Escrow | null {
+  if (!roundTicket) return { state: "claimed" };
+  if (roundTicket.status === RoundTicketStatus.Joined) return null;
+  return parkedEscrow({ roundTicket }, receiver, ownAccount);
+}
 
-/** The parked payouts of these tickets, read in one call: each ticket and its beneficiary. */
+/** Where a parked beacon ticket's claim pays: its beneficiary for a payout, its funder for a return. */
+export const roundDestination = (t: RoundTicket): Address =>
+  t.status === RoundTicketStatus.ReturnParked ? t.refundTo : t.beneficiary;
+
+/**
+ * Tickets whose end parked something for `usdcAccount` (the wallet's USDC account): a direct or
+ * beacon win whose payout waits, a refunded direct ticket whose credit waits for its
+ * beneficiary, or a refunded beacon ticket whose price waits to return there. A return to
+ * another funder (an app that funded the ticket for the wallet) is that funder's.
+ */
+export const parkedPayouts = (rows: readonly TicketRow[], usdcAccount: Address) =>
+  rows.filter(
+    (r) =>
+      !!r.end?.pending &&
+      (r.end.kind === "settled"
+        ? r.end.payout > 0n
+        : r.end.creditReturned === true ||
+          (r.end.refunded === true && r.beacon?.refundTo === usdcAccount)),
+  );
+
+/**
+ * The parked payouts of these tickets: each ticket in one call, then the destinations of those
+ * that still hold something (a beacon return's is its funder's account, read from the ticket).
+ * A parked return to another funder is left out (`parkedPayouts`): no claim of it is offered.
+ */
 export async function readEscrows(
   rows: readonly TicketRow[],
   usdcAccount: Address,
 ): Promise<Map<Address, Escrow>> {
-  const parked = parkedPayouts(rows);
+  const parked = parkedPayouts(rows, usdcAccount);
   const out = new Map<Address, Escrow>();
   if (parked.length === 0) return out;
-  const addresses = parked.flatMap((r) => [r.ticket, r.beneficiary]);
-  const accounts = await fetchEncodedAccounts(rpc, addresses, { commitment: "confirmed" });
+  const held = await fetchEncodedAccounts(
+    rpc,
+    parked.map((r) => r.ticket),
+    { commitment: "confirmed" },
+  );
+  // null: closed (or no longer the program's), so what it held was delivered
+  const tickets = parked.map((r, i): { ticket: Ticket } | { roundTicket: RoundTicket } | null => {
+    const t = held[i]!;
+    if (!t.exists || t.programAddress !== PROGRAM) return null;
+    return r.beacon ? { roundTicket: decodeRoundTicket(t).data } : { ticket: decodeTicket(t).data };
+  });
+  const destinations = tickets.map((t) =>
+    t === null ? null : "roundTicket" in t ? roundDestination(t.roundTicket) : t.ticket.beneficiary,
+  );
+  const open = destinations.filter((d): d is Address => d !== null);
+  const accounts = open.length
+    ? await fetchEncodedAccounts(rpc, open, { commitment: "confirmed" })
+    : [];
+  let next = 0;
   parked.forEach((r, i) => {
-    const t = accounts[2 * i]!;
-    const b = accounts[2 * i + 1]!;
-    const ticket = t.exists && t.programAddress === PROGRAM ? decodeTicket(t).data : null;
-    const receiver = receiverOf(b.exists ? b : null, USDC_MINT);
-    const escrow = escrowOf(ticket, receiver, r.beneficiary === usdcAccount);
+    const t = tickets[i] ?? null;
+    const d = destinations[i] ?? null;
+    let escrow: Escrow | null;
+    if (t === null || d === null) escrow = { state: "claimed" };
+    else {
+      const a = accounts[next++]!;
+      const receiver = receiverOf(a.exists ? a : null, USDC_MINT);
+      escrow =
+        "roundTicket" in t
+          ? roundEscrowOf(t.roundTicket, receiver, d === usdcAccount)
+          : escrowOf(t.ticket, receiver, d === usdcAccount);
+    }
     if (escrow) out.set(r.ticket, escrow);
   });
   return out;
 }
 
-/** `claim_payout` for a parked payout, after creating the wallet's USDC account if it is missing. */
+/**
+ * The claim of a parked payout (`claim_payout`, or `claim_round_payout` for a beacon ticket),
+ * after creating the wallet's USDC account if it is the missing destination.
+ */
 export async function claimPayoutInstructions(
   caller: TransactionSigner,
   ticket: Address,
-  escrow: Extract<Escrow, { state: "claimable" }>,
+  escrow: Claimable,
 ): Promise<Instruction[]> {
-  const p = await pdas();
-  // only the caller's own account is created, and only when it is the ticket's beneficiary
-  const own = (await ata(caller.address)) === escrow.ticket.beneficiary;
+  const destination =
+    "roundTicket" in escrow ? roundDestination(escrow.roundTicket) : escrow.ticket.beneficiary;
+  // only the caller's own account is created, and only when it is the ticket's destination
+  const own = (await ata(caller.address)) === destination;
   const create =
     escrow.createAccount && own
       ? [await createAtaIdempotent(caller, caller.address, USDC_MINT)]
       : [];
+  if ("roundTicket" in escrow)
+    return [
+      ...create,
+      await getBeaconClaimPayoutInstructionAsync(
+        caller,
+        { address: ticket, data: escrow.roundTicket },
+        USDC_MINT,
+        PROGRAM_CONFIG,
+      ),
+    ];
+  const p = await pdas();
   const ix = await getClaimPayoutInstructionAsync(
     {
       caller,

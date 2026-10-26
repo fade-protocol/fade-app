@@ -42,5 +42,7 @@ solana-keypair = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 solana-message = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-clock = "3"
+proptest = "1.11"

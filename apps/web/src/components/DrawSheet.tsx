@@ -37,7 +37,13 @@ function Found({ d }: { d: DrawView }) {
         <p className="draw-hero-title">{d.title}</p>
         {d.amount && <p className="draw-hero-amount">{d.amount}</p>}
         {d.pending && (
-          <p className="small muted">The payout waits in escrow, to be claimed by the buyer.</p>
+          <p className="small muted">
+            {d.state !== "expired"
+              ? "The payout waits in escrow, to be claimed by the buyer."
+              : d.creditReturned
+                ? "The ticket's credit waits in escrow, to be claimed."
+                : "The ticket price waits in escrow, to be claimed back."}
+          </p>
         )}
       </div>
       <dl className="draw-facts">

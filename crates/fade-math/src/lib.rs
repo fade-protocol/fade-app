@@ -71,4 +71,7 @@ pub enum Reject {
     Insolvent,
     /// Arithmetic overflow (never expected with in-range inputs; a bug if hit).
     Overflow,
+    /// A join into a group counted before the live epoch's close, at or
+    /// after that close (`epoch::Counters::join_n`).
+    EpochClosed,
 }

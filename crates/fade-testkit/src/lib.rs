@@ -73,6 +73,19 @@ pub fn litesvm(program_id: Address, program_path: &str) -> LiteSVM {
     svm
 }
 
+/// A LiteSVM instance on the mainnet feature set plus
+/// `increase_tx_account_lock_limit`, which raises a transaction's account
+/// locks from 64 to 128 and is not active on mainnet yet: for checking what
+/// a program must still hold once it is.
+pub fn litesvm_with_128_locks(program_id: Address, program_path: &str) -> LiteSVM {
+    let mut set = mainnet_feature_set();
+    set.activate(&agave_feature_set::increase_tx_account_lock_limit::id(), 0);
+    let mut svm = LiteSVM::new().with_feature_set(set);
+    svm.add_program_from_file(program_id, program_path)
+        .expect("program loads under the mainnet feature set");
+    svm
+}
+
 /// Path of a built program in `SBF_OUT_DIR`.
 pub fn program_path(program_name: &str) -> String {
     let dir = std::env::var("SBF_OUT_DIR").expect("SBF_OUT_DIR (source scripts/toolchain/env.sh)");

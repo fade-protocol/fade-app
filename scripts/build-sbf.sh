@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build every program with the pinned arch and platform-tools, and write the
+# Build every program with the pinned arch and platform-tools (the devnet
+# binary of fade included, into target/devnet), and write the
 # IDLs into idls/ (committed). Paths are absolute: anchor chdirs into each
 # program directory while building, so a relative --idl lands in the wrong place.
 #
@@ -42,6 +43,10 @@ if grep -q "overflows the maximum allowed frame space" "$build_log"; then
   rm -f target/deploy/*.so
   exit 1
 fi
+
+# The devnet binary carries instructions the mainnet build cannot (migrate_config);
+# its tests run in the gate, so it is built with every other binary.
+bash "$FADE_ROOT/scripts/build-sbf-devnet.sh"
 
 # Record what was built so tests and CI can assert the arch instead of assuming it.
 for so in target/deploy/*.so; do

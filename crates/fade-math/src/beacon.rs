@@ -1,4 +1,4 @@
-//! The shared beacon's arithmetic (a design the program does not carry yet): what a round prefunds and
+//! The shared beacon's arithmetic (Spec 08 §13.4): what a round prefunds and
 //! charges for its draw, when it is paid and closes, how much liability it may
 //! carry, and what every payer and sponsor gets back.
 //!
@@ -11,7 +11,7 @@
 //! a `u128` (`wide`), so no input can overflow a capacity or payment test.
 //!
 //! The round's state is `Book`. A ticket that has joined stays until the
-//! round's end (there is no cancellation), so every aggregate
+//! round's end (Spec 08 §13.10 point 4: no cancellation), so every aggregate
 //! only grows until the draw, and so do the paid fraction and the capacity it
 //! buys: the capacity rule checked at each join holds for good.
 
@@ -22,6 +22,24 @@ use crate::{payout_table, Reject};
 /// cap. A ticket admitted by `risk::admit` uses at most this much.
 pub const USAGE_SCALE: u64 = 1_000_000_000;
 
+/// `h`: the share of its paid capacity an unpaid round keeps free, in bps.
+/// While a round is unpaid, everything that bought its room (ticket prices,
+/// sponsorship) can still be refunded in full; without headroom a round left
+/// just short of payment and filled to its paid share would refuse every
+/// join, the one that completes the payment included, at no cost to whoever
+/// filled it. With it, an unpaid round holds at most `(1 − h) · k` caps, so
+/// the join that makes it paid always finds at least `h · k` caps of room,
+/// and once it lands nothing in the round can be refunded (Spec 09 §7).
+pub const UNPAID_HEADROOM_BPS: u64 = 1_000;
+
+/// `k × USAGE_SCALE × (1 − h)`: the usage an unpaid round may reach per unit of
+/// paid fraction. Exact: `USAGE_SCALE` is a multiple of `BPS`.
+fn unpaid_scale(round_k: u8) -> u64 {
+    u64::from(round_k)
+        .saturating_mul(USAGE_SCALE / crate::BPS)
+        .saturating_mul(crate::BPS.saturating_sub(UNPAID_HEADROOM_BPS))
+}
+
 /// Domain tag of a round's ORAO seed.
 pub const SEED_TAG: &[u8; 19] = b"FADE/BEACON-SEED/v1";
 /// Domain tag of a beacon ticket's outcome.
@@ -31,11 +49,16 @@ pub const SEED_PREIMAGE_LEN: usize = 19 + 32 + 32 + 8 + 8 + 32;
 /// Bytes hashed into a ticket's outcome: tag, program, round, ticket, the
 /// 64-byte randomness, the draw index.
 pub const OUTCOME_PREIMAGE_LEN: usize = 22 + 32 + 32 + 32 + 64 + 1;
+/// Domain tag of a payout table's hash, the seed of its `PayoutTable` account.
+pub const PAYOUT_TABLE_TAG: &[u8; 20] = b"FADE/PAYOUT-TABLE/v1";
+/// Bytes hashed for a payout table of `MAX_OUTCOMES` outcomes: tag, count,
+/// then `p` and `m` of each outcome.
+pub const PAYOUT_TABLE_PREIMAGE_MAX_LEN: usize = 20 + 1 + 16 * crate::MAX_OUTCOMES;
 /// Slots between a round's close and the earliest request of its draw: the
 /// seed needs the first slot after the close in `SlotHashes`.
 pub const REQUEST_DELAY_SLOTS: u64 = 2;
 
-/// What a round snapshots at its creation and runs on.
+/// What a round snapshots at its creation and runs on (Spec 08 §13.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Terms {
     /// `T_r`: the ticket prices that pay the whole draw, in the token's base unit.
@@ -158,16 +181,67 @@ fn wide(a: u128, b: u64) -> (u128, u64) {
     (hi.wrapping_add(carry), lo as u64)
 }
 
-/// The capacity rule: `U × T_r × D_r ≤ k × USAGE_SCALE × min(T_r × D_r, R ×
-/// D_r + S × T_r)`, i.e. `Σ L_i / cap_i ≤ k · min(1, R/T_r + S/D_r)` without a
-/// division, `U` being the round's total usage. Exact for every `u64` input.
+/// The capacity rule, `U` being the round's total usage: a paid round holds at
+/// most `k` caps, `U ≤ k × USAGE_SCALE`; an unpaid one at most `(1 − h) · k`
+/// caps times its paid fraction, `U × T_r × D_r ≤ k × USAGE_SCALE × (1 − h) ×
+/// (R × D_r + S × T_r)`. That is `Σ L_i / cap_i ≤ k · min(1, R/T_r + S/D_r)`
+/// once paid and `≤ (1 − h) · k · (R/T_r + S/D_r)` before, without a division.
+/// The bound only grows with `R` and `S`, and jumps from below `(1 − h) · k`
+/// to `k` at the payment. Exact for every `u64` input.
 pub fn fits(terms: &Terms, usage_total: u64, prices: u64, sponsorship: u64) -> bool {
     if !terms.is_valid() {
         return false;
     }
-    let k_scale = u64::from(terms.round_k).saturating_mul(USAGE_SCALE);
+    if is_paid(terms, prices, sponsorship) {
+        return usage_total <= u64::from(terms.round_k).saturating_mul(USAGE_SCALE);
+    }
     let lhs = wide(terms.whole(), usage_total);
-    let rhs = wide(paid_units(terms, prices, sponsorship), k_scale);
+    let rhs = wide(
+        paid_units(terms, prices, sponsorship),
+        unpaid_scale(terms.round_k),
+    );
+    lhs <= rhs
+}
+
+/// The share of a round, paid or not, one join may take: at most `k ·
+/// min(1, price/T_r + sponsorship/D_r)` caps, `price` and `sponsorship` what
+/// this join brings, or `h · k` caps if more for the join that makes the
+/// round paid (`pays_round`). That is `usage × T_r × D_r ≤ k × USAGE_SCALE ×
+/// min(T_r × D_r, price × D_r + sponsorship × T_r)`, or `usage ≤ h · k ×
+/// USAGE_SCALE` for the paying join, without a division. A round's room
+/// beyond what bought it is then sold at the rate an unpaid round's is:
+/// taking `k` caps costs about `T_r` of ticket prices or `D_r` of
+/// sponsorship, about one draw, however many joins take it, rather than the
+/// edge on long-shot tickets at the minimum price, and whoever fills paid
+/// rounds pays for the draws it sends the next joins to. The `h · k` floor is
+/// the room the paying join is promised (`UNPAID_HEADROOM_BPS`); it is that
+/// join's alone, since a floor every join kept would let `1/h` minimum-price
+/// joins fill a paid round. A join that pays a whole draw itself keeps all
+/// `k`. It holds in an unpaid round too: there the room is everyone's prices
+/// and sponsorship, and a join just before the payment could otherwise take
+/// what earlier joins bought, as one just after it could. Exact for every
+/// `u64` input.
+pub fn within_join_share(
+    terms: &Terms,
+    usage: u64,
+    price: u64,
+    sponsorship: u64,
+    pays_round: bool,
+) -> bool {
+    if !terms.is_valid() {
+        return false;
+    }
+    let floor = u64::from(terms.round_k)
+        .saturating_mul(USAGE_SCALE / crate::BPS)
+        .saturating_mul(UNPAID_HEADROOM_BPS);
+    if pays_round && usage <= floor {
+        return true;
+    }
+    let lhs = wide(terms.whole(), usage);
+    let rhs = wide(
+        paid_units(terms, price, sponsorship),
+        u64::from(terms.round_k).saturating_mul(USAGE_SCALE),
+    );
     lhs <= rhs
 }
 
@@ -220,7 +294,7 @@ pub fn charged_to_prices(draw_cost: u64, sponsorship: u64) -> u64 {
 }
 
 /// A ticket's share of the draw, `ceil((C − min(S, C)) × price / R)`. At most its prepay whenever the
-/// round was paid and `C ≤ D_r`.
+/// round was paid and `C ≤ D_r` (Spec 08 §13.4, fact 1).
 pub fn charge(draw_cost: u64, sponsorship: u64, prices: u64, price: u64) -> Result<u64, Reject> {
     if price > prices {
         return Err(Reject::Overflow);
@@ -317,7 +391,7 @@ pub fn entry(
     })
 }
 
-/// A round's aggregates, as joins and sponsorship move
+/// A round's aggregates (Spec 08 §13.2.2), as joins and sponsorship move
 /// them before the draw. Nothing ever leaves a round before its end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Book {
@@ -356,7 +430,12 @@ impl Book {
     /// break the capacity rule (`RoundCapacity`), in which case nothing moves.
     /// The join's own ticket price and sponsorship count toward the payment it is
     /// checked against, so a join sponsoring its own draw in full always fits
-    /// up to `k` caps.
+    /// up to `k` caps, and one that makes the round paid with a usage of at
+    /// most `h · k` caps always fits (`UNPAID_HEADROOM_BPS`). Every join,
+    /// paid round or not, also takes at most its own share of the round
+    /// (`within_join_share`), the `h · k` floor being the paying join's
+    /// only: the room other joins' prices and sponsorship bought, before the
+    /// payment or after it, is no prize for cheap tickets.
     pub fn join(&self, terms: &Terms, e: &Entry, sponsorship: u64) -> Result<Option<Book>, Reject> {
         terms.checked()?;
         let after = Book {
@@ -370,7 +449,10 @@ impl Book {
             prepaid: add(self.prepaid, e.prepay)?,
             tickets: self.tickets.checked_add(1).ok_or(Reject::Overflow)?,
         };
-        Ok(after.fits(terms).then_some(after))
+        let pays_round = !self.is_paid(terms) && after.is_paid(terms);
+        let fits = after.fits(terms)
+            && within_join_share(terms, e.usage, e.price, sponsorship, pays_round);
+        Ok(fits.then_some(after))
     }
 
     /// The round after a sponsorship of `lamports`. It only adds payment, so
@@ -435,6 +517,29 @@ pub fn outcome_preimage(
     at = put(&mut buf, at, randomness);
     put(&mut buf, at, &[i]);
     buf
+}
+
+/// The bytes of a payout table's hash (Spec 08 §13.2.1), and how many of the
+/// buffer's bytes they are: `"FADE/PAYOUT-TABLE/v1" ‖ len ‖ p₀ ‖ m₀ ‖ … ‖
+/// p_{len−1} ‖ m_{len−1}`, `len` one byte, `p` and `m` little-endian `u64`.
+/// `OutcomeCount` for no outcome or more than `MAX_OUTCOMES`, so that `len`
+/// always fits its byte and two tables never share a preimage. Checks nothing
+/// else: `payout_table::validate` does.
+pub fn payout_table_preimage(
+    outcomes: &[payout_table::Outcome],
+) -> Result<([u8; PAYOUT_TABLE_PREIMAGE_MAX_LEN], usize), Reject> {
+    if outcomes.is_empty() || outcomes.len() > crate::MAX_OUTCOMES {
+        return Err(Reject::OutcomeCount);
+    }
+    let len = u8::try_from(outcomes.len()).map_err(|_| Reject::OutcomeCount)?;
+    let mut buf = [0u8; PAYOUT_TABLE_PREIMAGE_MAX_LEN];
+    let mut at = put(&mut buf, 0, PAYOUT_TABLE_TAG);
+    at = put(&mut buf, at, &[len]);
+    for o in outcomes {
+        at = put(&mut buf, at, &o.p.to_le_bytes());
+        at = put(&mut buf, at, &o.m.to_le_bytes());
+    }
+    Ok((buf, at))
 }
 
 #[cfg(test)]
@@ -566,12 +671,21 @@ mod tests {
 
     #[test]
     fn capacity_follows_payment() {
-        // A quarter of the draw paid by ticket prices buys a quarter of the cap.
+        // A quarter of the draw paid by ticket prices buys a quarter of the
+        // cap, less the headroom an unpaid round keeps: 0.9 × 0.25.
         let quarter = TERMS.threshold / 4;
-        assert!(fits(&TERMS, USAGE_SCALE / 4, quarter, 0));
-        assert!(!fits(&TERMS, USAGE_SCALE / 4 + 1, quarter, 0));
+        assert!(fits(&TERMS, 225_000_000, quarter, 0));
+        assert!(!fits(&TERMS, 225_000_001, quarter, 0));
         // sponsorship buys the same per lamport of draw
-        assert!(fits(&TERMS, USAGE_SCALE / 2, quarter, D / 4));
+        assert!(fits(&TERMS, 450_000_000, quarter, D / 4));
+        assert!(!fits(&TERMS, 450_000_001, quarter, D / 4));
+        // a paid round has the whole cap: the headroom is gone with the refund
+        assert!(fits(&TERMS, USAGE_SCALE, TERMS.threshold, 0));
+        assert!(!fits(&TERMS, USAGE_SCALE + 1, TERMS.threshold, 0));
+        assert!(fits(&TERMS, USAGE_SCALE, 0, D));
+        // one unit short of payment holds at most 0.9 cap
+        assert!(fits(&TERMS, 899_999_895, TERMS.threshold - 1, 0));
+        assert!(!fits(&TERMS, 899_999_896, TERMS.threshold - 1, 0));
         // never more than k caps, however much is paid
         assert!(fits(&TERMS, USAGE_SCALE, u64::MAX, u64::MAX));
         assert!(!fits(&TERMS, USAGE_SCALE + 1, u64::MAX, u64::MAX));
@@ -629,6 +743,18 @@ mod tests {
         assert!(!refund_open(1_714, 0, 1_715));
         assert!(refund_open(1_715, 0, 1_715));
         assert!(!in_request_window(u64::MAX - 1, u64::MAX, 0));
+        // Saturated bounds, the same cases as tests/ts/fade/beaconMath.test.ts
+        // ("saturates its bounds at u64::MAX as fade_math does").
+        const M: u64 = u64::MAX;
+        assert!(in_request_window(M, M - 1, 150));
+        assert!(in_request_window(M, M, 150));
+        assert!(!in_request_window(M - 1, M - 1, 150));
+        assert!(!in_request_window(M, M - 2, 1));
+        assert!(!is_expired(M, M - 1, 150));
+        assert!(!is_expired(M, M, 0));
+        assert!(is_expired(M, M - 2, 1));
+        assert!(refund_open(M, M - 1, 1_715));
+        assert!(!refund_open(M - 1, M - 1, 1_715));
     }
 
     #[test]
@@ -647,7 +773,7 @@ mod tests {
 
     #[test]
     fn charges_round_up_and_never_exceed_the_prepay() {
-        // Ten tickets of 1 USDC, a draw of 734 440
+        // Spec 09 §5: ten tickets of 1 USDC, a draw of 734 440
         let c = charge(734_440, 0, 10_000_000, 1_000_000).unwrap();
         assert_eq!(c, 73_444);
         assert_eq!(
@@ -665,6 +791,69 @@ mod tests {
         let p = prepay(&TERMS, 1_000_000).unwrap();
         assert_eq!(charge(D, 0, 8_640_000, 1_000_000), Ok(p));
         assert_eq!(prepay_return(1, 2), Err(Reject::Overflow));
+    }
+
+    /// The figures of the guide's §2 and the Technical Specification's §2
+    /// *Charge* row: the program bounds a ticket's draw charge by its prepay,
+    /// `ceil(D_r × price / T_r)`, not by 150 bps; 150 bps is the design point
+    /// of `T` at the draw cost `C` it was derived from (Spec 09 §3).
+    #[test]
+    fn the_charge_bound_is_the_prepay_and_150_bps_only_at_the_derivation_cost() {
+        // basis points of a 0.50 USDC price at 120 USD per SOL, in hundredths
+        let centi_bps = |lamports: u64| lamports * 120 * 10_000 * 100 / 500_000_000;
+        let half = 500_000;
+        // the threshold formula with C, not D_r: 8.64 USDC from 734 440, and
+        // D_r = 1 660 392 would give 19.53
+        assert_eq!(734_440 * half / 42_500, 8_640_470);
+        assert_eq!(1_660_392 * half / 42_500, 19_534_023);
+        // at the derivation point: the draw's share plus a 20 000 settlement
+        // share is 150 bps of the minimum price
+        let c = charge(734_440, 0, TERMS.threshold, half).unwrap();
+        assert_eq!(c, 42_503);
+        assert_eq!(centi_bps(c + 20_000), 15_000);
+        // the enforced bound, the prepay: about 231 bps at the last step
+        let p = prepay(&TERMS, half).unwrap();
+        assert_eq!(p, 96_088);
+        assert_eq!(centi_bps(p), 23_061);
+        assert_eq!(charge(D, 0, TERMS.threshold, half), Ok(p));
+        // a fee doubled after creation still fits the prefund, and is charged
+        let doubled = 2 * FEE + FULFILLED + SHARE;
+        assert!(request_fits(2 * FEE, PENDING, SHARE, D));
+        assert_eq!(
+            centi_bps(charge(doubled, 0, TERMS.threshold, half).unwrap()),
+            17_145
+        );
+        // today's rent: a draw of 1 896 200 at an 8.64 threshold is 263 bps,
+        // under a prepay of 765 bps; today's threshold is 22.31 USDC
+        let today = Terms {
+            draw_max: 5_505_160,
+            ..TERMS
+        };
+        assert_eq!(
+            centi_bps(charge(1_896_200, 0, TERMS.threshold, half).unwrap()),
+            26_336
+        );
+        assert_eq!(centi_bps(prepay(&today, half).unwrap()), 76_460);
+        assert_eq!(1_896_200 * half / 42_500, 22_308_235);
+        // a fee doubled after creation at today's rent: it still fits today's
+        // prefund exactly (1 000 000 + 4 455 160 + 50 000 = D_r), and its real
+        // cost, 1 000 000 + 1 346 200 of locked rent + 50 000, is charged
+        // about 333 bps at an 8.64 threshold, not the last step's 171
+        let (today_pending, today_locked) = (4_455_160, 1_346_200);
+        assert_eq!(2 * FEE + today_pending + SHARE, today.draw_max);
+        assert!(request_fits(2 * FEE, today_pending, SHARE, today.draw_max));
+        assert!(!request_fits(
+            2 * FEE + 1,
+            today_pending,
+            SHARE,
+            today.draw_max
+        ));
+        let today_doubled = 2 * FEE + today_locked + SHARE;
+        assert_eq!(today_doubled, 2_396_200);
+        let c = charge(today_doubled, 0, TERMS.threshold, half).unwrap();
+        assert_eq!(c, 138_669);
+        assert_eq!(centi_bps(c), 33_280);
+        assert!(c <= prepay(&today, half).unwrap(), "within the prepay");
     }
 
     #[test]
@@ -756,8 +945,10 @@ mod tests {
         // 1 USDC buys 1/8.64 of the cap
         let small = USAGE_SCALE / 8;
         assert_eq!(b.join(&TERMS, &e(1_000_000, small), 0), Ok(None));
+        // 1 USDC buys 0.9 / 8.64 of the cap unpaid: 104 166 666
+        assert_eq!(b.join(&TERMS, &e(1_000_000, 104_166_667), 0), Ok(None));
         let ok = b
-            .join(&TERMS, &e(1_000_000, small - 10_000_000), 0)
+            .join(&TERMS, &e(1_000_000, 104_166_666), 0)
             .unwrap()
             .unwrap();
         assert_eq!(ok.tickets, 1);
@@ -773,7 +964,7 @@ mod tests {
 
     #[test]
     fn ten_tickets_of_one_usdc_pay_their_draw_and_get_the_rest_back() {
-        // The worked example at the corrected prefund
+        // Spec 09 §5's example at the corrected prefund
         let mut b = Book::default();
         for i in 1..=10 {
             b = b.join(&TERMS, &e(1_000_000, 0), 0).unwrap().unwrap();
@@ -804,6 +995,230 @@ mod tests {
         assert!(ch <= ticket.prepay);
     }
 
+    /// The audit's saturation attack (15 October 2026): one ticket of 1.40
+    /// USDC and one lamport less than the sponsorship that pays the round,
+    /// using as much of the cap as the round admits unpaid. Before the
+    /// headroom, that was 999 999 397 of `USAGE_SCALE`, and every honest join
+    /// was then refused, the one paying the round included, until the
+    /// attacker refunded everything. Now the round holds at most 0.9 cap, and
+    /// any join that pays it with up to 0.1 cap fits.
+    #[test]
+    fn an_unpaid_round_keeps_room_for_the_join_that_pays_it() {
+        let price = 1_400_000;
+        let sp = sponsorship_to_pay(&TERMS, price, 0).unwrap() - 1;
+        assert!(!is_paid(&TERMS, price, sp));
+        assert!(is_paid(&TERMS, price, sp + 1));
+        // the largest usage the attacker's ticket can take
+        let (mut lo, mut hi) = (0u64, USAGE_SCALE);
+        while lo < hi {
+            let mid = lo + (hi - lo).div_ceil(2);
+            if fits(&TERMS, mid, price, sp) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        assert!(lo < 900_000_000, "unpaid usage {lo}");
+        assert!(!fits(&TERMS, 999_999_397, price, sp));
+        let attacker = Entry {
+            usage: lo,
+            ..e(price, lo)
+        };
+        let round = Book::default()
+            .join(&TERMS, &attacker, sp)
+            .unwrap()
+            .unwrap();
+        assert!(!round.is_paid(&TERMS));
+        // an honest 0.50 USDC ticket that pays the round, at 1 % and at 10 %
+        // of its cap, bare: the round becomes paid and nothing is refundable
+        for usage in [USAGE_SCALE / 100, USAGE_SCALE / 10] {
+            let honest = round.join(&TERMS, &e(500_000, usage), 0).unwrap().unwrap();
+            assert!(honest.is_paid(&TERMS));
+        }
+        // a join that does not pay it is held to the unpaid bound
+        let small = round.join(&TERMS, &e(1, 1_000), 0).unwrap();
+        assert_eq!(small, None);
+    }
+
+    /// The second final audit, item 2 (17 October 2026): honest prices pay a
+    /// round, then one ticket at the minimum price, sized to the room left,
+    /// takes all of it, sending every later join of the tick to a new unpaid
+    /// round. Before the per-join share, a paid round checked only `U ≤ k`,
+    /// so that ticket fitted for the edge on 0.50 USDC. Now every join takes
+    /// at most `k · its paid share`, the join paying the round at least
+    /// `h · k`: the room left goes to joins that pay for it, before the
+    /// payment as after it.
+    #[test]
+    fn filling_a_paid_round_costs_its_payment_not_one_ticket() {
+        let mut paid = Book::default();
+        for _ in 0..9 {
+            paid = paid.join(&TERMS, &e(1_000_000, 0), 0).unwrap().unwrap();
+        }
+        assert!(paid.is_paid(&TERMS));
+        let rest = u64::from(TERMS.round_k) * USAGE_SCALE - paid.usage;
+        // the whole room left, on 0.50 USDC: refused
+        assert_eq!(paid.join(&TERMS, &e(500_000, rest), 0), Ok(None));
+        // the floor, h · k caps, is not a paid round's: 0.50 USDC is 5.8 %
+        // of T_r, and that is its share
+        let floor = USAGE_SCALE / 10;
+        assert_eq!(paid.join(&TERMS, &e(500_000, floor), 0), Ok(None));
+        let own = USAGE_SCALE * 500_000 / TERMS.threshold;
+        assert!(paid.join(&TERMS, &e(500_000, own), 0).unwrap().is_some());
+        assert_eq!(paid.join(&TERMS, &e(500_000, own + 1), 0), Ok(None));
+        // its own share: 4.32 USDC is half of T_r, so half of the k caps
+        let half = USAGE_SCALE / 2;
+        assert!(paid.join(&TERMS, &e(4_320_000, half), 0).unwrap().is_some());
+        assert_eq!(paid.join(&TERMS, &e(4_320_000, half + 1), 0), Ok(None));
+        // or the draw it pays itself: a whole D_r of sponsorship buys k caps
+        assert!(paid.join(&TERMS, &e(500_000, rest), D).unwrap().is_some());
+        assert!(within_join_share(&TERMS, half, 0, D / 2, false));
+        assert!(!within_join_share(&TERMS, half + 1, 0, D / 2, false));
+        assert!(within_join_share(&TERMS, half, 4_320_000, 0, false));
+        // the floor is the paying join's
+        assert!(!within_join_share(&TERMS, floor, 500_000, 0, false));
+        assert!(within_join_share(&TERMS, floor, 500_000, 0, true));
+        assert!(!within_join_share(&TERMS, floor + 1, 500_000, 0, true));
+
+        // The join that makes a round paid is held to the same share: eight
+        // honest tickets, then one completing the payment with 0.64 USDC.
+        let mut nearly = Book::default();
+        for _ in 0..8 {
+            nearly = nearly.join(&TERMS, &e(1_000_000, 0), 0).unwrap().unwrap();
+        }
+        assert!(!nearly.is_paid(&TERMS));
+        let completing = TERMS.threshold - nearly.prices;
+        assert_eq!(nearly.join(&TERMS, &e(completing, rest), 0), Ok(None));
+        let landed = nearly
+            .join(&TERMS, &e(completing, floor), 0)
+            .unwrap()
+            .unwrap();
+        assert!(landed.is_paid(&TERMS));
+    }
+
+    /// The final audit, fourth pass (17 October 2026): the per-join share held
+    /// only for joins leaving a round paid, so a join made one slot before
+    /// the payment took the room other joins' prices bought. Seven honest
+    /// 1 USDC tickets at 0.01 cap each; a 0.50 USDC long shot at 0.711 caps
+    /// fitted the unpaid bound `0.9 · k · (R + p)/T_r`, and the next honest
+    /// join paid the round with 0.83 caps used. Now every join is held to
+    /// `k · its own share`, paid round or not, the join paying the round to
+    /// at least `h · k`.
+    #[test]
+    fn a_join_before_the_payment_takes_only_its_own_share() {
+        let honest_usage = USAGE_SCALE / 100;
+        let mut round = Book::default();
+        for _ in 0..7 {
+            round = round
+                .join(&TERMS, &e(1_000_000, honest_usage), 0)
+                .unwrap()
+                .unwrap();
+        }
+        assert!(!round.is_paid(&TERMS));
+        let attack = 711_000_000;
+        let p = 500_000;
+        // the unpaid bound alone admits it: this is the audit's ticket
+        assert!(fits(&TERMS, round.usage + attack, round.prices + p, 0));
+        assert!(!is_paid(&TERMS, round.prices + p, 0));
+        assert_eq!(round.join(&TERMS, &e(p, attack), 0), Ok(None));
+        // 0.50 USDC is 5.8 % of T_r, and the round stays unpaid: that is
+        // its share, the floor h · k being the paying join's
+        let floor = USAGE_SCALE / 10;
+        assert_eq!(round.join(&TERMS, &e(p, floor), 0), Ok(None));
+        let own = USAGE_SCALE * p / TERMS.threshold;
+        assert!(round.join(&TERMS, &e(p, own), 0).unwrap().is_some());
+        assert_eq!(round.join(&TERMS, &e(p, own + 1), 0), Ok(None));
+        // the room bought by sponsorship is no prize either: 80 % of D_r
+        // sponsored by a third party, then the same long shot bare
+        let sponsored = Book::default().sponsor(D / 10 * 8).unwrap();
+        assert!(!sponsored.is_paid(&TERMS));
+        assert!(fits(&TERMS, attack, p, D / 10 * 8));
+        assert_eq!(sponsored.join(&TERMS, &e(p, attack), 0), Ok(None));
+        // a join paying for its own room still takes it in an unpaid round
+        let own = Book::default()
+            .join(&TERMS, &e(4_320_000, 450_000_000), 0)
+            .unwrap()
+            .unwrap();
+        assert!(!own.is_paid(&TERMS));
+        // and the honest join that pays the round finds the room the
+        // attacker did not take
+        let paid = round
+            .join(&TERMS, &e(1_640_000, honest_usage), 0)
+            .unwrap()
+            .unwrap();
+        assert!(paid.is_paid(&TERMS));
+        assert!(paid
+            .join(&TERMS, &e(4_320_000, USAGE_SCALE / 2), 0)
+            .unwrap()
+            .is_some());
+    }
+
+    /// The re-audit of 24 October 2026: with the `h · k` floor every join's,
+    /// `1/h` = 10 minimum-price long shots, each at exactly `h · k` caps,
+    /// filled a paid round for 1 USDC of ticket prices, about an eighth of
+    /// the 8.24 USDC its room costs at the round's rate, and sent every
+    /// later join of the tick to a new unpaid round. The floor is now the
+    /// paying join's only: in a paid round each long shot is held to its own
+    /// share, and filling the round's room costs about its payment. Figures
+    /// of a 70 000 USDC vault at 2.8 %, a per-ticket cap of 980 USDC.
+    #[test]
+    fn minimum_price_joins_at_the_floor_cannot_fill_a_paid_round() {
+        let cap: u64 = 980_000_000;
+        let honest = |price: u64, liability: u64| Entry {
+            usage: usage(liability, cap).unwrap(),
+            liability,
+            ..e(price, 0)
+        };
+        let mut a = Book::default();
+        for _ in 0..9 {
+            a = a
+                .join(&TERMS, &honest(1_000_000, 5_000_000), 0)
+                .unwrap()
+                .unwrap();
+        }
+        assert!(a.is_paid(&TERMS));
+        let min_price = 100_000;
+        let attacker = honest(min_price, cap / 10);
+        assert_eq!(attacker.usage, USAGE_SCALE / 10, "exactly h · k caps");
+        // refused: its own share is 0.10 / 8.64 of the cap, 1.16 %
+        assert_eq!(a.join(&TERMS, &attacker, 0), Ok(None));
+        let own = USAGE_SCALE * min_price / TERMS.threshold;
+        let within = Entry {
+            usage: own,
+            ..attacker
+        };
+        assert!(a.join(&TERMS, &within, 0).unwrap().is_some());
+        let over = Entry {
+            usage: own + 1,
+            ..attacker
+        };
+        assert_eq!(a.join(&TERMS, &over, 0), Ok(None));
+        // minimum-price joins at their own share: filling the room left
+        // costs about its payment, not one draw divided by 1/h
+        let start = a.usage;
+        let mut n = 0u64;
+        while let Some(next) = a.join(&TERMS, &within, 0).unwrap() {
+            a = next;
+            n += 1;
+        }
+        let spent = n * min_price;
+        let fair =
+            u128::from(a.usage - start) * u128::from(TERMS.threshold) / u128::from(USAGE_SCALE);
+        assert!(u128::from(spent) >= fair, "{spent} paid for {fair}");
+        // the same long shot still fits as the join that pays a round
+        let mut nearly = Book::default();
+        for _ in 0..8 {
+            nearly = nearly
+                .join(&TERMS, &honest(1_000_000, 5_000_000), 0)
+                .unwrap()
+                .unwrap();
+        }
+        let pays = honest(TERMS.threshold - nearly.prices, cap / 10);
+        let landed = nearly.join(&TERMS, &pays, 0).unwrap().unwrap();
+        assert!(landed.is_paid(&TERMS));
+        // and no later floor-sized join takes the room it left
+        assert_eq!(landed.join(&TERMS, &attacker, 0), Ok(None));
+    }
+
     #[test]
     fn seed_and_outcome_preimages() {
         let s = seed_preimage(&[1; 32], &[2; 32], 74, 75, &[3; 32]);
@@ -825,5 +1240,31 @@ mod tests {
             seed_preimage(&[1; 32], &[2; 32], 74, 75, &[3; 32]),
             seed_preimage(&[1; 32], &[9; 32], 74, 75, &[3; 32])
         );
+    }
+
+    #[test]
+    fn payout_table_preimage_layout_and_bounds() {
+        use payout_table::Outcome;
+        let t = [Outcome { p: 3, m: 4 }, Outcome { p: u64::MAX, m: 9 }];
+        let (b, n) = payout_table_preimage(&t).unwrap();
+        assert_eq!(n, 20 + 1 + 32);
+        assert_eq!(&b[..20], PAYOUT_TABLE_TAG);
+        assert_eq!(b[20], 2);
+        assert_eq!(&b[21..29], &3u64.to_le_bytes());
+        assert_eq!(&b[29..37], &4u64.to_le_bytes());
+        assert_eq!(&b[37..45], &u64::MAX.to_le_bytes());
+        assert_eq!(&b[45..53], &9u64.to_le_bytes());
+        assert!(b[53..].iter().all(|&x| x == 0));
+        let full = [Outcome { p: 1, m: 1 }; crate::MAX_OUTCOMES];
+        assert_eq!(
+            payout_table_preimage(&full).unwrap().1,
+            PAYOUT_TABLE_PREIMAGE_MAX_LEN
+        );
+        assert_eq!(payout_table_preimage(&[]), Err(Reject::OutcomeCount));
+        let over = [Outcome { p: 1, m: 1 }; crate::MAX_OUTCOMES + 1];
+        assert_eq!(payout_table_preimage(&over), Err(Reject::OutcomeCount));
+        // the order of the outcomes is part of the table
+        let (r, _) = payout_table_preimage(&[t[1], t[0]]).unwrap();
+        assert_ne!(b, r);
     }
 }

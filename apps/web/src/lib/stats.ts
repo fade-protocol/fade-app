@@ -1,5 +1,5 @@
 // The all-time figures the keeper indexes from the program's history (GET /v1/stats): wins,
-// what winners were paid, the biggest and the last win. The program keeps no such counters,
+// what winners were paid, the biggest and the last win, of direct and beacon tickets alike. The program keeps no such counters,
 // and the app itself only reads the last days of tickets.
 import { API_URL } from "./config";
 import type { TicketKind } from "./ticketKind";
@@ -30,7 +30,7 @@ export type Stats = {
   all: StatsSplit;
 };
 
-const KINDS: readonly TicketKind[] = ["Checkout", "Swap", "Booster", "Ticket"];
+const KINDS: readonly TicketKind[] = ["Checkout", "Swap", "Booster", "Small ticket", "Ticket"];
 const count = (v: unknown) =>
   typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null;
 const amount = (v: unknown) => (typeof v === "string" && /^\d+$/.test(v) ? BigInt(v) : null);
@@ -68,6 +68,14 @@ export function parseSplit(v: unknown): StatsSplit | null {
   };
 }
 
+/** The answer of GET /v1/stats (or its live push, lib/live); null when it does not read as one. */
+export function parseStats(j: unknown): Stats | null {
+  if (!j || typeof j !== "object") return null;
+  const o = j as Record<string, unknown>;
+  const all = parseSplit(o.all);
+  return all ? { syncing: o.syncing === true, all } : null;
+}
+
 /** The keeper's figures; throws when it cannot be reached or answers something else. */
 export async function fetchStats(): Promise<Stats> {
   const r = await fetch(`${API_URL}/v1/stats`, {
@@ -75,8 +83,7 @@ export async function fetchStats(): Promise<Stats> {
     signal: AbortSignal.timeout(6_000),
   });
   if (!r.ok) throw new Error(`the figures service answered HTTP ${r.status}`);
-  const j = (await r.json()) as Record<string, unknown>;
-  const all = parseSplit(j.all);
-  if (!all) throw new Error("the figures service answered an unreadable body");
-  return { syncing: j.syncing === true, all };
+  const stats = parseStats(await r.json());
+  if (!stats) throw new Error("the figures service answered an unreadable body");
+  return stats;
 }

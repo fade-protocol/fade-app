@@ -1,0 +1,51 @@
+# cargo-fuzz targets for the program (Spec 08 §13.8). Outside the workspace:
+# built with `cargo +nightly fuzz`, which needs a nightly toolchain and
+# libFuzzer, so the stable gate never builds them. From the repository root:
+#   pnpm fuzz:settle-layout -max_total_time=3600 -fork=6
+# The harness itself is programs/fade/tests/batch_layout/mod.rs, also run on a
+# bounded budget by programs/fade/tests/settle_layout.rs in the gate.
+[package]
+name = "fade-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.10"
+fade = { path = "../programs/fade" }
+fade-math = { path = "../crates/fade-math" }
+fade-testkit = { path = "../crates/fade-testkit" }
+test-integrator = { path = "../tests/programs/test-integrator", features = ["no-entrypoint"] }
+orao-mock = { path = "../tests/programs/orao-mock", features = ["no-entrypoint"] }
+anchor-lang = { version = "=1.2.0", features = ["event-cpi"] }
+litesvm = "=0.16.0"
+solana-address = "2.6"
+solana-account = "4.3"
+solana-instruction = "3.4"
+solana-keypair = "3.1"
+solana-signer = "3.0"
+solana-transaction = "4.1"
+solana-message = "4.4"
+solana-address-lookup-table-interface = { version = "3.1", features = ["bincode", "bytemuck"] }
+solana-sdk-ids = "3"
+solana-clock = "3"
+solana-sha256-hasher = { version = "3", features = ["sha2"] }
+
+# Its own workspace, so that the repository's does not claim it.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "settle-round-layout"
+path = "fuzz_targets/settle_round_layout.rs"
+test = false
+doc = false
+bench = false

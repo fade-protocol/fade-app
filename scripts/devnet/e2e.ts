@@ -52,12 +52,12 @@ import {
 } from "../../clients/js/src/generated/fade/index.ts";
 import {
   PROGRAM,
-  SYSTEM,
   TOKEN,
   USDC,
   USDC_MINT,
   SendError,
   accountData,
+  openExpiryAccounts,
   accountOwner,
   ata,
   currentSlot,
@@ -627,17 +627,22 @@ async function recover(c: Ctx) {
         continue;
       }
     }
-    // Open, or requested and never fulfilled: wait out T_SETTLE and expire.
+    // Open, or requested and never fulfilled: wait out T_SETTLE and expire (an Open one
+    // names its derived request address, its seed recorded first).
     while ((await currentSlot()) <= w.expirySlot) await sleep(4000);
+    const open = w.status === TicketStatus.Requested ? null : await openExpiryAccounts(ticket, w);
+    if (w.status !== TicketStatus.Requested && !open)
+      throw new Error(`ticket #${n}: its seed can no longer be derived: refund_expired_ticket`);
     const s = await send(
       c.deployer,
       [
+        ...(open?.record ? [open.record] : []),
         await getExpireTicketInstructionAsync(
           {
             caller: c.deployer,
             integrator: c.integrator,
             ticket,
-            randomness: w.status === TicketStatus.Requested ? w.randomness : SYSTEM,
+            randomness: open ? open.randomness : w.randomness,
             payer: c.deployer.address,
             ...common(c),
           },
@@ -943,18 +948,22 @@ async function main() {
     }
     const w = (await fetchTicket(rpc, e.ticket)).data;
     const vaultBefore = (await fetchVault(rpc, pdas.vault)).data;
+    // Never requested: its seed recorded, and the request address derived from it named.
+    const open = await openExpiryAccounts(e.ticket, w);
+    if (!open) throw new Error("the expiring ticket's seed can no longer be derived");
     let s: Sent | null = null;
     for (let i = 0; i < 5 && !s; i++) {
       try {
         s = await send(
           deployer,
           [
+            ...(open.record ? [open.record] : []),
             await getExpireTicketInstructionAsync(
               {
                 caller: deployer,
                 integrator: c.integrator,
                 ticket: e.ticket,
-                randomness: SYSTEM,
+                randomness: open.randomness,
                 payer: deployer.address,
                 ...common(c),
               },

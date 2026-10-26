@@ -43,9 +43,65 @@
     "version": 1,
     "shape": "b0bdbb2977c3227b"
   },
+  "PayoutTableRegistered": {
+    "version": 1,
+    "shape": "87e33eafd5921239"
+  },
   "RandomnessRequested": {
     "version": 1,
     "shape": "8732e080edbb2fee"
+  },
+  "RoundClosed": {
+    "version": 1,
+    "shape": "3c51c79087d2fdcb"
+  },
+  "RoundDrawRequested": {
+    "version": 1,
+    "shape": "093f433da22d1897"
+  },
+  "RoundDrawn": {
+    "version": 1,
+    "shape": "186ed06b5fff2342"
+  },
+  "RoundEntropyRecorded": {
+    "version": 1,
+    "shape": "9d9c3683cc0a742f"
+  },
+  "RoundExpired": {
+    "version": 1,
+    "shape": "d062dec4438a185c"
+  },
+  "RoundOpened": {
+    "version": 1,
+    "shape": "8b6584d509e47c17"
+  },
+  "RoundPaid": {
+    "version": 1,
+    "shape": "c297bed11c11b316"
+  },
+  "RoundPayoutClaimed": {
+    "version": 1,
+    "shape": "26454b5096ee91f1"
+  },
+  "RoundRefunded": {
+    "version": 1,
+    "shape": "60fb3735f6cdc113"
+  },
+  "RoundSponsored": {
+    "version": 1,
+    "shape": "b93a1d6095a22939"
+  },
+  "RoundTicketReturned": {
+    "version": 1,
+    "shape": "59ebbca7667351bc"
+  },
+  "RoundTicketSettled": {
+    "version": 1,
+    "shape": "28acbf3dafff8fa0"
+  },
+  "RoundVrfSwept": {
+    "version": 1,
+    "shape": "a7584e235985921a"
   },
   "ShareAccountChanged": {
     "version": 1,
@@ -55,9 +111,25 @@
     "version": 1,
     "shape": "ba0dd0488e896a4d"
   },
-  "TicketExpired": {
+  "SharesClaimed": {
     "version": 1,
-    "shape": "9c5c5ea42b5bb0ba"
+    "shape": "956eb4ea25699646"
+  },
+  "SponsorshipReclaimed": {
+    "version": 1,
+    "shape": "a468d9e418f11a29"
+  },
+  "TicketEntropyRecorded": {
+    "version": 1,
+    "shape": "db165a5ee297e466"
+  },
+  "TicketExpired": {
+    "version": 2,
+    "shape": "98b1d7efb7705aed"
+  },
+  "TicketJoined": {
+    "version": 1,
+    "shape": "7bd2fd4689363c47"
   },
   "TicketOpened": {
     "version": 1,
@@ -66,6 +138,10 @@
   "TicketSettled": {
     "version": 1,
     "shape": "d0f3da3f6f96df7c"
+  },
+  "TicketVrfSwept": {
+    "version": 1,
+    "shape": "db8cb7829ef8e25b"
   },
   "WithdrawClaimed": {
     "version": 1,

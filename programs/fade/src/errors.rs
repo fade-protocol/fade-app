@@ -122,6 +122,42 @@ pub enum FadeError {
     VaultRequired, // 6052
     #[msg("the owner's token account cannot receive yet")]
     DestinationUnusable, // 6053
+
+    // --- shared beacon (Spec 08 §13.6) -------------------------------------------
+    #[msg("the round is neither the accepting round nor the next one")]
+    WrongRound, // 6054
+    #[msg("the round accepts no more sponsorship")]
+    RoundNotAccepting, // 6055
+    #[msg("the round's liability would exceed what its paid share of the draw allows")]
+    RoundCapacity, // 6056
+    #[msg("the round's draw is paid: no refund")]
+    RoundPaid, // 6057
+    #[msg("the round is not in the state this instruction needs")]
+    WrongRoundStatus, // 6058
+    #[msg("the round's refund window has not opened")]
+    RefundWindow, // 6059
+    #[msg("a round's draw may only be requested from two slots after its close until T_SETTLE")]
+    RoundRequestWindow, // 6060
+    #[msg("the live draw cost exceeds the round's prefund")]
+    DrawUnderfunded, // 6061
+    #[msg("the payout table account does not match its hash or the ticket")]
+    WrongPayoutTable, // 6062
+    /// Never returned: there is no cancellation (Spec 08 §13.10 point 4). The
+    /// slot is kept so that the codes after it do not move.
+    #[msg("unused: kept so that the codes after it do not move")]
+    NotCanceller, // 6063
+    #[msg("an integrator's first ticket must name its share account")]
+    ShareAccountRequired, // 6064
+    #[msg("the settlement accounts do not follow the ticket layout")]
+    MalformedBatch, // 6065
+    #[msg("a round counted before the epoch's close takes no join at or after that close")]
+    RoundEpochClosed, // 6066
+    #[msg("only a participant of the round, shown by its ticket, may refund it")]
+    NotRoundParticipant, // 6067
+    #[msg("the entropy was never recorded and SlotHashes no longer proves it")]
+    EntropyUnrecorded, // 6068
+    #[msg("SlotHashes still proves the ticket's entropy: record it and expire the ticket")]
+    EntropyStillProven, // 6069
 }
 
 impl From<Reject> for FadeError {
@@ -141,6 +177,7 @@ impl From<Reject> for FadeError {
             Reject::GlobalExposure => FadeError::GlobalExposure,
             Reject::Insolvent => FadeError::Insolvent,
             Reject::Overflow => FadeError::MathOverflow,
+            Reject::EpochClosed => FadeError::RoundEpochClosed,
         }
     }
 }

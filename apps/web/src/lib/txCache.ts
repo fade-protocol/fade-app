@@ -7,6 +7,10 @@
 // IndexedDB may be missing or refuse (a private window, cleared site data): the memory cache then
 // does the job for the session.
 import type { Signature } from "@solana/kit";
+import {
+  TRANSACTION_VERSIONS_ASKED,
+  type AskedTransactionVersion,
+} from "../../../../clients/js/src/transactionFetch.ts";
 import { PROGRAM, RPC_URL } from "./config";
 import { sleep } from "./rpc";
 
@@ -14,7 +18,7 @@ import { sleep } from "./rpc";
 export type TxEvents<E> = { events: E[] };
 
 /** Bump when the decoders change, so older entries are not read back. */
-const VERSION = 1;
+const VERSION = 3;
 const DB = `fade-tx-${PROGRAM}`;
 const STORE = "events";
 const BATCH = 20;
@@ -97,39 +101,64 @@ async function idbPut(entries: [string, string][]): Promise<void> {
 type RpcReply = { id: number; result?: unknown; error?: unknown };
 
 /**
- * `getTransaction` for each signature, `encoding: "json"`, in batches. A missing entry means an
- * error (read again later); null means the RPC does not have the transaction yet.
+ * `getTransaction` for each signature, `encoding: "json"`, in batches, whatever its version: asked
+ * in version 1, then the ones answered with an error in version 0 (an RPC that refuses the
+ * version-1 parameter). A missing entry means an error (read again later); null means the RPC
+ * does not have the transaction yet.
  */
 export async function fetchJsonTxBatch(sigs: Signature[]): Promise<Map<Signature, unknown>> {
   const out = new Map<Signature, unknown>();
   for (let i = 0; i < sigs.length; i += BATCH) {
-    const chunk = sigs.slice(i, i + BATCH);
-    const body = chunk.map((s, id) => ({
-      jsonrpc: "2.0",
-      id,
-      method: "getTransaction",
-      params: [s, { commitment: "confirmed", maxSupportedTransactionVersion: 0, encoding: "json" }],
-    }));
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const res = await fetch(RPC_URL, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      }).catch(() => null);
-      if (res && res.ok) {
-        const replies = (await res.json().catch(() => [])) as RpcReply[];
-        for (const r of Array.isArray(replies) ? replies : []) {
-          const sig = chunk[r.id];
-          if (sig && r.error === undefined) out.set(sig, r.result ?? null);
-        }
-        break;
-      }
-      // 429 or a server error: back off, then the same batch again
-      if (res && res.status !== 429 && res.status < 500) break;
-      await sleep(Math.min(800 * 2 ** attempt, 8_000));
+    let chunk = sigs.slice(i, i + BATCH);
+    for (const version of TRANSACTION_VERSIONS_ASKED) {
+      const refused = await batchOnce(chunk, version, out);
+      if (!refused.length) break;
+      chunk = refused;
     }
   }
   return out;
+}
+
+/**
+ * One batch of `getTransaction` asked in `version`: answers go into `out`, and the signatures
+ * answered with an error are returned. A batch that never gets through is neither.
+ */
+async function batchOnce(
+  chunk: Signature[],
+  version: AskedTransactionVersion,
+  out: Map<Signature, unknown>,
+): Promise<Signature[]> {
+  const body = chunk.map((s, id) => ({
+    jsonrpc: "2.0",
+    id,
+    method: "getTransaction",
+    params: [
+      s,
+      { commitment: "confirmed", maxSupportedTransactionVersion: version, encoding: "json" },
+    ],
+  }));
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(RPC_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+    if (res && res.ok) {
+      const replies = (await res.json().catch(() => [])) as RpcReply[];
+      const refused: Signature[] = [];
+      for (const r of Array.isArray(replies) ? replies : []) {
+        const sig = chunk[r.id];
+        if (!sig) continue;
+        if (r.error === undefined) out.set(sig, r.result ?? null);
+        else refused.push(sig);
+      }
+      return refused;
+    }
+    // 429 or a server error: back off, then the same batch again
+    if (res && res.status !== 429 && res.status < 500) break;
+    await sleep(Math.min(800 * 2 ** attempt, 8_000));
+  }
+  return [];
 }
 
 // --- the cache --------------------------------------------------------------------------------

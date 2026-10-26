@@ -16,22 +16,32 @@ export type Integrator = { discriminator: ReadonlyUint8Array; version: number; b
 /** USDC account receiving the app share; changed only by `set_share_account`. */
 shareAccount: Address; reservedLiability: bigint; openTickets: bigint; nextNonce: bigint; volumeTotal: bigint; 
 /** Set by the guardian or the council: this integrator's new tickets are refused. */
-paused: boolean; createdAt: bigint; reserved: ReadonlyUint8Array;  };
+paused: boolean; createdAt: bigint; 
+/**
+ * App shares of its settled and forfeited beacon tickets, not yet claimed
+ * (Spec 08 §13.2.6); taken from the reserved tail.
+ */
+appSharesAccrued: bigint; reserved: ReadonlyUint8Array;  };
 
 export type IntegratorArgs = { version: number; bump: number; authority: Address; 
 /** USDC account receiving the app share; changed only by `set_share_account`. */
 shareAccount: Address; reservedLiability: number | bigint; openTickets: number | bigint; nextNonce: number | bigint; volumeTotal: number | bigint; 
 /** Set by the guardian or the council: this integrator's new tickets are refused. */
-paused: boolean; createdAt: number | bigint; reserved: ReadonlyUint8Array;  };
+paused: boolean; createdAt: number | bigint; 
+/**
+ * App shares of its settled and forfeited beacon tickets, not yet claimed
+ * (Spec 08 §13.2.6); taken from the reserved tail.
+ */
+appSharesAccrued: number | bigint; reserved: ReadonlyUint8Array;  };
 
 /** Gets the encoder for {@link IntegratorArgs} account data. */
 export function getIntegratorEncoder(): FixedSizeEncoder<IntegratorArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['version', getU8Encoder()], ['bump', getU8Encoder()], ['authority', getAddressEncoder()], ['shareAccount', getAddressEncoder()], ['reservedLiability', getU64Encoder()], ['openTickets', getU64Encoder()], ['nextNonce', getU64Encoder()], ['volumeTotal', getU64Encoder()], ['paused', getBooleanEncoder()], ['createdAt', getI64Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 64)]]), (value) => ({ ...value, discriminator: INTEGRATOR_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['version', getU8Encoder()], ['bump', getU8Encoder()], ['authority', getAddressEncoder()], ['shareAccount', getAddressEncoder()], ['reservedLiability', getU64Encoder()], ['openTickets', getU64Encoder()], ['nextNonce', getU64Encoder()], ['volumeTotal', getU64Encoder()], ['paused', getBooleanEncoder()], ['createdAt', getI64Encoder()], ['appSharesAccrued', getU64Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 56)]]), (value) => ({ ...value, discriminator: INTEGRATOR_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Integrator} account data. */
 export function getIntegratorDecoder(): FixedSizeDecoder<Integrator> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['version', getU8Decoder()], ['bump', getU8Decoder()], ['authority', getAddressDecoder()], ['shareAccount', getAddressDecoder()], ['reservedLiability', getU64Decoder()], ['openTickets', getU64Decoder()], ['nextNonce', getU64Decoder()], ['volumeTotal', getU64Decoder()], ['paused', getBooleanDecoder()], ['createdAt', getI64Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 64)]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['version', getU8Decoder()], ['bump', getU8Decoder()], ['authority', getAddressDecoder()], ['shareAccount', getAddressDecoder()], ['reservedLiability', getU64Decoder()], ['openTickets', getU64Decoder()], ['nextNonce', getU64Decoder()], ['volumeTotal', getU64Decoder()], ['paused', getBooleanDecoder()], ['createdAt', getI64Decoder()], ['appSharesAccrued', getU64Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 56)]]);
 }
 
 /** Gets the codec for {@link Integrator} account data. */

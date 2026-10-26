@@ -37,9 +37,11 @@ const USDC_DECIMALS = 6;
 /**
  * Devnet SOL sent with a claim when the wallet holds less than SOL_TOP_UP_BELOW,
  * at most once a day per wallet and per IP address: claims come every few
- * minutes, and fresh wallets must not drain the faucet's SOL.
+ * minutes, and fresh wallets must not drain the faucet's SOL. Enough for the
+ * SOL a first small ticket on the shared draw fronts while it runs (its rents
+ * and its draw, about 0.011 to 0.017 SOL), plus its fees.
  */
-const SOL_TOP_UP = 10_000_000n;
+const SOL_TOP_UP = 20_000_000n;
 const SOL_TOP_UP_BELOW = 5_000_000n;
 /** The faucet keeps this much SOL for its own fees and the accounts it creates. */
 const FAUCET_SOL_RESERVE = 200_000_000n;
