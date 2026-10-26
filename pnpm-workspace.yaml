@@ -11,15 +11,12 @@ allowBuilds:
   bufferutil: false
   esbuild: false
   utf-8-validate: false
-# Supply-chain cooldown: a package must be at least 3 days old to be installed.
-minimumReleaseAge: 4320
-# Exact pins younger than the cooldown on 17 September 2026 (all published
-# 15–16 September). Remove each entry once its package is older than 3 days;
-# scripts/check-cooldown-invariant.mjs (Phase 2) will flag stale entries.
-minimumReleaseAgeExclude:
-  - codama
-  - "@codama/*"
-  - vitest
-  - "@vitest/*"
-  - "@types/node"
-  - prettier
+# Supply-chain cooldown: a package must be at least 7 days old to be installed,
+# long enough for a compromised or broken release to be found and pulled.
+minimumReleaseAge: 10080
+
+# Transitive pins for advisories. jayson (through @solana/web3.js v1, which
+# Reown's Solana adapter requires) uses uuid's v4 only; 11.1.1 closes the
+# v3/v5/v6 buffer bounds advisory and keeps v4's API.
+overrides:
+  "jayson>uuid": "11.1.1"

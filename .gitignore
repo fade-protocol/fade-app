@@ -29,3 +29,7 @@ scripts/devnet/runs/
 # wrangler local state
 .wrangler/
 __pycache__/
+
+# wrangler dev local secrets
+.dev.vars
+**/.dev.vars
