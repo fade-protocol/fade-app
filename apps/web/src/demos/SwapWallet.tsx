@@ -6,7 +6,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ShareWinButton } from "../components/ShareSheet";
 import { short, usdc } from "../lib/format";
 import type { ShareWin } from "../lib/shareWin";
-import { isBusy, type FlowState } from "./useTicketFlow";
+import { expiredWords, isBusy, type FlowState } from "./useTicketFlow";
 
 export type TicketOption = { value: bigint; oneIn: string; pct: string; best: boolean };
 
@@ -341,7 +341,11 @@ export function SwapWallet({
             <>
               <div className="mw-big is-lost">✦</div>
               <h3>No draw in time</h3>
-              <p>The ticket price stays with the vault. Your swap went through as usual.</p>
+              <p>
+                {s.refund
+                  ? `${expiredWords(s)} Your swap went through as usual.`
+                  : "The ticket price stays with the vault. Your swap went through as usual."}
+              </p>
             </>
           ) : s.result && s.result.outcome < 0 ? (
             <>

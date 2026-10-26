@@ -18,7 +18,7 @@ import { findUnfinished, type Ticket } from "../lib/ticket";
 import { Link } from "../router";
 import { ConnectButton } from "../wallet/ConnectButton";
 import { SIM_TICKET } from "./devSimulation";
-import { isBusy, isHalved, simulateOpen, type FlowState } from "./useTicketFlow";
+import { expiredWords, isBusy, isHalved, simulateOpen, type FlowState } from "./useTicketFlow";
 
 export type Live = Extract<ProtocolState, { initialized: true }>;
 
@@ -196,10 +196,8 @@ export function ResultBanner({
   if (s.phase === "expired")
     return (
       <div className="result result-expired rise" role="status">
-        <p className="result-title">Expired</p>
-        <p className="small">
-          No draw in time: the ticket stays with the vault. Nothing else moved.
-        </p>
+        <p className="result-title">{s.refund ? "Draw cancelled" : "Expired"}</p>
+        <p className="small">{expiredWords(s)}</p>
       </div>
     );
   if (s.phase !== "done" || !s.result) return null;

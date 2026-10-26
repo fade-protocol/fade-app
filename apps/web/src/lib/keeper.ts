@@ -5,7 +5,13 @@
 import type { Address, Signature } from "@solana/kit";
 import { API_URL } from "./config";
 
-export type KeeperState = "queued" | "requested" | "fulfilled" | "settled" | "expired" | "unknown";
+/**
+ * `refunded`: past its expiry with its seed never recorded and no longer provable, the ticket
+ * got its vault credit back (`refund_expired_ticket`); the app shows it as a refund of that
+ * credit, read from the expiry's `TicketExpired`.
+ */
+export type KeeperState =
+  "queued" | "requested" | "fulfilled" | "settled" | "expired" | "refunded" | "unknown";
 
 export type KeeperTicket = {
   state: KeeperState;
@@ -25,6 +31,7 @@ const STATES: readonly KeeperState[] = [
   "fulfilled",
   "settled",
   "expired",
+  "refunded",
   "unknown",
 ];
 
@@ -43,6 +50,21 @@ async function call(path: string, init: RequestInit = {}, timeoutMs = 6_000): Pr
 export async function submitTicket(ticket: Address): Promise<boolean> {
   try {
     const r = await call("/v1/tickets", { method: "POST", body: JSON.stringify({ ticket }) });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Tells the keeper a beacon join just confirmed, so that its beacon loop looks
+ * at once rather than at its quiet pace (POST /v1/beacon/wake). It carries
+ * nothing: the keeper reads the round from the chain. Never throws: a wake
+ * that fails only leaves the round to the keeper's own pace.
+ */
+export async function wakeBeacon(): Promise<boolean> {
+  try {
+    const r = await call("/v1/beacon/wake", { method: "POST" });
     return r.ok;
   } catch {
     return false;

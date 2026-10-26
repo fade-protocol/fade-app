@@ -19,9 +19,11 @@ import {
   getOpenTicketInstructionAsync,
   getRequestRandomnessInstructionAsync,
   getSettleTicketInstructionAsync,
+  REFUND_OUTCOME,
   TicketStatus,
   type Ticket,
 } from "../../../../clients/js/src/generated/fade";
+import type { TicketExpiredRecord } from "../../../../clients/js/src/direct/index.ts";
 import { ORAO, PROGRAM, PROGRAM_CONFIG, SLOT_HASHES, USDC_MINT } from "./config";
 import { eventsOf, fetchJsonTx } from "./events";
 import { ata, fetchIntegrator, integratorPda, pdas, tokenBalance } from "./fade";
@@ -281,10 +283,31 @@ export async function findUnfinished(
   return out;
 }
 
-/** How a ticket ended, read back from its last transactions. */
+/**
+ * A direct ticket's vault credit returned (`refund_expired_ticket`: its seed was never recorded
+ * and can no longer be proven): no draw ran. `pending`: it waits in escrow for `claim_payout`.
+ */
+export type CreditRefund = { amount: bigint; pending: boolean };
+
+/**
+ * How a ticket ended, read back from its last transactions: drawn and settled (a late binding
+ * included), or closed without a draw, forfeited or, `refund`, its vault credit returned. An
+ * expiry read from the chain alone (a refund parked in escrow) may come without its signature.
+ */
 export type TicketEnd =
   | { kind: "settled"; outcome: number; payout: bigint; pending: boolean; signature: Signature }
-  | { kind: "expired"; signature: Signature };
+  | { kind: "expired"; signature: Signature | null; refund?: CreditRefund };
+
+/** The end a `TicketExpired` describes: a forfeiture, or a refund of the vault credit. */
+export function expiryEnd(e: TicketExpiredRecord, signature: Signature | null): TicketEnd {
+  return e.version === 2 && e.refunded
+    ? { kind: "expired", signature, refund: { amount: e.refund, pending: e.parked } }
+    : { kind: "expired", signature };
+}
+
+/** A `PayoutPending` ticket's `outcome` when what waits is a refunded credit, not a payout. */
+export const isParkedRefund = (t: Pick<Ticket, "status" | "outcome">) =>
+  t.status === TicketStatus.PayoutPending && t.outcome === REFUND_OUTCOME;
 
 /**
  * A closed ticket's account is gone: its settle or expire transaction says how
@@ -308,7 +331,7 @@ export async function findTicketEnd(ticket: Address): Promise<TicketEnd | null> 
           signature: s.signature,
         };
       if (e.kind === "TicketExpired" && e.data.ticket === ticket)
-        return { kind: "expired", signature: s.signature };
+        return expiryEnd(e.data, s.signature);
     }
   }
   return null;

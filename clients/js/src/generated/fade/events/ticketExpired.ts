@@ -6,24 +6,122 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type ReadonlyUint8Array } from '@solana/kit';
+import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type ReadonlyUint8Array } from '@solana/kit';
 
 export const TICKET_EXPIRED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([225, 164, 213, 172, 133, 203, 222, 131]);
 
 export function getTicketExpiredEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(TICKET_EXPIRED_EVENT_DISCRIMINATOR); }
 
-export type TicketExpiredEvent = { version: number; ticket: Address; integrator: Address; forfeited: bigint;  };
+export type TicketExpiredEvent = { version: number; ticket: Address; integrator: Address; 
+/** The vault credit forfeited to the vault; 0 for a refund. */
+forfeited: bigint; 
+/**
+ * The ticket's randomness was requested: its bound request was pending or
+ * fulfilled with zero.
+ */
+requested: boolean; 
+/**
+ * An ORAO request exists at the ticket's seed: bound when `requested`,
+ * created through ORAO by someone and never bound otherwise (pending or
+ * fulfilled with zero).
+ */
+requestFound: boolean; 
+/**
+ * The program could look for that request: always for a forfeiture,
+ * never for a refund. The alarm reads a keeper's failure only from
+ * `checked && !request_found`.
+ */
+checked: boolean; 
+/**
+ * The bound request was still pending and `vrf_payer` paid its rent, so
+ * ORAO's rent refund reaches `vrf_payer` when it fulfils it, after the
+ * ticket's close, and `sweep_ticket_vrf` moves it then. False for a
+ * request someone else created and the ticket bound: ORAO refunds its
+ * creator.
+ */
+pending: boolean; 
+/**
+ * The ticket was refunded, not forfeited: never requested, its seed never
+ * recorded, and SlotHashes no longer proving it.
+ */
+refunded: boolean; 
+/**
+ * The vault credit returned to the beneficiary (or parked in
+ * `payout_escrow`); 0 unless `refunded`.
+ */
+refund: bigint; 
+/**
+ * The refund waits in `payout_escrow` for `claim_payout`: the beneficiary
+ * could not receive it. The ticket stays, `PayoutPending` with `outcome`
+ * `REFUND_OUTCOME`.
+ */
+parked: boolean; 
+/**
+ * `Vault.ticket_forfeits_withheld` after this expiry: when it counts as
+ * one a withheld draw may explain (all but `!requested && checked &&
+ * !request_found`), its ordinal in that count.
+ */
+ticketForfeitsWithheld: bigint;  };
 
-export type TicketExpiredEventArgs = { version: number; ticket: Address; integrator: Address; forfeited: number | bigint;  };
+export type TicketExpiredEventArgs = { version: number; ticket: Address; integrator: Address; 
+/** The vault credit forfeited to the vault; 0 for a refund. */
+forfeited: number | bigint; 
+/**
+ * The ticket's randomness was requested: its bound request was pending or
+ * fulfilled with zero.
+ */
+requested: boolean; 
+/**
+ * An ORAO request exists at the ticket's seed: bound when `requested`,
+ * created through ORAO by someone and never bound otherwise (pending or
+ * fulfilled with zero).
+ */
+requestFound: boolean; 
+/**
+ * The program could look for that request: always for a forfeiture,
+ * never for a refund. The alarm reads a keeper's failure only from
+ * `checked && !request_found`.
+ */
+checked: boolean; 
+/**
+ * The bound request was still pending and `vrf_payer` paid its rent, so
+ * ORAO's rent refund reaches `vrf_payer` when it fulfils it, after the
+ * ticket's close, and `sweep_ticket_vrf` moves it then. False for a
+ * request someone else created and the ticket bound: ORAO refunds its
+ * creator.
+ */
+pending: boolean; 
+/**
+ * The ticket was refunded, not forfeited: never requested, its seed never
+ * recorded, and SlotHashes no longer proving it.
+ */
+refunded: boolean; 
+/**
+ * The vault credit returned to the beneficiary (or parked in
+ * `payout_escrow`); 0 unless `refunded`.
+ */
+refund: number | bigint; 
+/**
+ * The refund waits in `payout_escrow` for `claim_payout`: the beneficiary
+ * could not receive it. The ticket stays, `PayoutPending` with `outcome`
+ * `REFUND_OUTCOME`.
+ */
+parked: boolean; 
+/**
+ * `Vault.ticket_forfeits_withheld` after this expiry: when it counts as
+ * one a withheld draw may explain (all but `!requested && checked &&
+ * !request_found`), its ordinal in that count.
+ */
+ticketForfeitsWithheld: number | bigint;  };
 
 /** Gets the encoder for {@link TicketExpiredEventArgs} event data. */
 export function getTicketExpiredEventEncoder(): FixedSizeEncoder<TicketExpiredEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['version', getU8Encoder()], ['ticket', getAddressEncoder()], ['integrator', getAddressEncoder()], ['forfeited', getU64Encoder()]]), [getConstantEncoder(TICKET_EXPIRED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['version', getU8Encoder()], ['ticket', getAddressEncoder()], ['integrator', getAddressEncoder()], ['forfeited', getU64Encoder()], ['requested', getBooleanEncoder()], ['requestFound', getBooleanEncoder()], ['checked', getBooleanEncoder()], ['pending', getBooleanEncoder()], ['refunded', getBooleanEncoder()], ['refund', getU64Encoder()], ['parked', getBooleanEncoder()], ['ticketForfeitsWithheld', getU64Encoder()]]), [getConstantEncoder(TICKET_EXPIRED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link TicketExpiredEvent} event data. */
 export function getTicketExpiredEventDecoder(): FixedSizeDecoder<TicketExpiredEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['version', getU8Decoder()], ['ticket', getAddressDecoder()], ['integrator', getAddressDecoder()], ['forfeited', getU64Decoder()]]), [getConstantDecoder(TICKET_EXPIRED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['version', getU8Decoder()], ['ticket', getAddressDecoder()], ['integrator', getAddressDecoder()], ['forfeited', getU64Decoder()], ['requested', getBooleanDecoder()], ['requestFound', getBooleanDecoder()], ['checked', getBooleanDecoder()], ['pending', getBooleanDecoder()], ['refunded', getBooleanDecoder()], ['refund', getU64Decoder()], ['parked', getBooleanDecoder()], ['ticketForfeitsWithheld', getU64Decoder()]]), [getConstantDecoder(TICKET_EXPIRED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link TicketExpiredEvent} event data. */

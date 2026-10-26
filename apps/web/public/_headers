@@ -3,3 +3,7 @@
 # (revalidated on every load) so a deploy is picked up at once.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Which build the site serves (src/lib/staleDeploy.ts): read fresh by every ticket flow.
+/build.json
+  Cache-Control: no-store

@@ -698,8 +698,11 @@ fn a_payer_expires_its_own_ticket() {
         .open_direct(&player, 25 * USDC, &coin_flip(), 0)
         .unwrap();
     env.advance(151, 60);
-    let ix = env.expire_ix(&player.key(), &ticket, &system_id());
+    let request = env.ticket_request_address(&ticket).unwrap();
+    let record = env.record_ticket_entropy_ix(&ticket);
+    let ix = env.expire_ix(&player.key(), &ticket, &request);
     let kp = player.kp.insecure_clone();
-    env.send(&[ix], &[&kp]).expect("expired by its own payer");
+    env.send(&[record, ix], &[&kp])
+        .expect("expired by its own payer");
     assert!(!env.exists(&ticket));
 }

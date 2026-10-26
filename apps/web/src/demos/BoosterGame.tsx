@@ -13,7 +13,7 @@ import { PREMIUM, SECOND_PACK } from "../lib/payoutTables";
 import type { ShareWin } from "../lib/shareWin";
 import { CARDS, cardFor } from "../pack3d/tiers";
 import { REVEAL_MS, type PackView } from "../pack3d/types";
-import { isBusy, type FlowState } from "./useTicketFlow";
+import { expiredWords, isBusy, type FlowState } from "./useTicketFlow";
 
 /** Paper strips and square pixels in Fade's colours and gold, falling with gravity. */
 function Confetti({ fire, color }: { fire: number; color: string }) {
@@ -190,7 +190,9 @@ export function BoosterGame({
     result = (
       <div className="pg-result" role="status">
         <b>Enjoy your cards</b>
-        <span>{got}. No draw in time: the add-on stays with the vault.</span>
+        <span>
+          {got}. {s.refund ? expiredWords(s) : "No draw in time: the add-on stays with the vault."}
+        </span>
       </div>
     );
   else if (revealed && s.phase === "done" && s.result) {

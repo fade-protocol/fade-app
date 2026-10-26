@@ -28,6 +28,9 @@ pub struct SetParams<'info> {
 /// change behind the longest delay among the fields it loosens, 72 hours for
 /// the treasury. A new call replaces a pending change and restarts its clock.
 /// The development build (feature "no-timelock") applies every change at once.
+/// A change that applies at once (every tightening, or every change in the
+/// no-timelock build) writes the parameters and the treasury, as
+/// `apply_params` would, and replaces any pending change.
 pub fn set_params(ctx: Context<SetParams>, params: RiskParams) -> Result<()> {
     require!(params.is_valid(), FadeError::InvalidParams);
     let now = Clock::get()?.unix_timestamp;
@@ -43,8 +46,7 @@ pub fn set_params(ctx: Context<SetParams>, params: RiskParams) -> Result<()> {
     let effective_at = now.checked_add(delay).ok_or(FadeError::MathOverflow)?;
     let applied = delay == 0;
     if applied {
-        config.params = params;
-        config.pending.active = false;
+        apply_change(config, params, treasury);
     } else {
         config.pending = PendingChange {
             active: true,
@@ -68,15 +70,26 @@ pub struct ApplyParams<'info> {
     pub config: Box<Account<'info, Config>>,
 }
 
-/// Permissionless once the pending change is due.
+/// One change, one effect: the parameters and the treasury together, and no
+/// change left pending. Both `set_params`, for a change that applies at once,
+/// and `apply_params` write a change through it.
+fn apply_change(config: &mut Config, params: RiskParams, treasury: Pubkey) {
+    config.params = params;
+    config.protocol_treasury = treasury;
+    config.pending.active = false;
+}
+
+/// Permissionless once the pending change is due. The pending parameters are
+/// checked again: a change queued before a range was narrowed cannot land
+/// outside it (the council cancels it instead).
 pub fn apply_params(ctx: Context<ApplyParams>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let config = &mut ctx.accounts.config;
     require!(config.pending.active, FadeError::NoPendingChange);
     require!(now >= config.pending.effective_at, FadeError::ChangeNotDue);
-    config.params = config.pending.params;
-    config.protocol_treasury = config.pending.protocol_treasury;
-    config.pending.active = false;
+    require!(config.pending.params.is_valid(), FadeError::InvalidParams);
+    let (params, treasury) = (config.pending.params, config.pending.protocol_treasury);
+    apply_change(config, params, treasury);
     emit_cpi!(ParamsApplied {
         version: EVENT_VERSION,
         effective_at: config.pending.effective_at,

@@ -38,12 +38,10 @@ export const ORAO = address("VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y");
 export const SYSTEM = address("11111111111111111111111111111111");
 export const SLOT_HASHES = address("SysvarS1otHashes111111111111111111111111111");
 const ATA_PROGRAM = address("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-const TOKEN = address("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+export const TOKEN = address("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const COMPUTE_BUDGET = address("ComputeBudget111111111111111111111111111111");
 
 export const DEFAULT_RPC_URL = "https://api.devnet.solana.com";
-/** Earliest request: `open_slot + REQUEST_MIN_DELAY_SLOTS`. */
-export const REQUEST_MIN_DELAY_SLOTS = 2n;
 /** Microlamports per compute unit: lands quickly on devnet for a few hundred lamports. */
 const PRIORITY_MICROLAMPORTS = 2_000n;
 
@@ -60,16 +58,50 @@ export function rpcStatus(e: unknown): number | undefined {
   return (e as { context?: { statusCode?: number } }).context?.statusCode;
 }
 
+/** A request the RPC has not answered in this long fails, as any refused call does. */
+export const RPC_TIMEOUT_MS = 20_000;
+
+/**
+ * Runs `call` with a signal that aborts it after `timeoutMs`, and clears that
+ * timer as soon as the call settles (`AbortSignal.timeout` offers no way to
+ * clear its own). A scheduled timer keeps a Durable Object from hibernating,
+ * and an object that cannot hibernate is billed for its wall-clock time even
+ * while idle: a 20 s timer left behind every call would bill a loop that calls
+ * the RPC every few seconds around the clock, whatever its pace.
+ */
+export async function withDeadline<T>(
+  timeoutMs: number,
+  call: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException(`no answer in ${timeoutMs} ms`, "TimeoutError")),
+    timeoutMs,
+  );
+  try {
+    return await call(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * An RPC client that backs off on 429 and 5xx. Retries stay short: the keeper
  * runs on an alarm, and the next tick picks up whatever this one could not do.
+ * Every request has a deadline (`withDeadline`): an endpoint that never
+ * answers fails the call instead of holding the alarm that made it.
+ * `onAttempt` is called before each attempt, retries included: each one is an
+ * outbound fetch, a subrequest of the invocation that makes it.
  */
-export function makeRpc(url: string) {
+export function makeRpc(url: string, timeoutMs = RPC_TIMEOUT_MS, onAttempt?: () => void) {
   const base = createDefaultRpcTransport({ url });
   const transport = (async (request: Parameters<RpcTransport>[0]) => {
     for (let attempt = 0; ; attempt++) {
+      onAttempt?.();
       try {
-        return await base(request);
+        return await (request.signal
+          ? base(request)
+          : withDeadline(timeoutMs, (signal) => base({ ...request, signal })));
       } catch (e) {
         const status = rpcStatus(e);
         const retriable = status === 429 || (status !== undefined && status >= 500);
@@ -97,6 +129,13 @@ export async function eventAuthority(): Promise<Address> {
 export async function epochPda(epochId: bigint) {
   return (
     await getProgramDerivedAddress({ programAddress: PROGRAM, seeds: ["epoch", u64(epochId)] })
+  )[0];
+}
+
+/** `["vrf-payer", ticket]`: the system-owned PDA that pays ORAO for a direct ticket. */
+export async function vrfPayerPda(ticket: Address) {
+  return (
+    await getProgramDerivedAddress({ programAddress: PROGRAM, seeds: ["vrf-payer", bytes(ticket)] })
   )[0];
 }
 
@@ -138,63 +177,6 @@ export async function oraoTreasury(rpc: Rpc): Promise<Address> {
   if (!value) throw new Error(`ORAO network state ${networkState} not found`);
   const state = decodeBase64(value.data[0]);
   return getAddressDecoder().decode(state.subarray(40, 72));
-}
-
-export async function oraoRequestPda(seed: Uint8Array) {
-  return (
-    await getProgramDerivedAddress({
-      programAddress: ORAO,
-      seeds: ["orao-vrf-randomness-request", seed],
-    })
-  )[0];
-}
-
-/** ORAO randomness v2 account: pending (749 bytes, tag 0) or fulfilled (137 bytes, tag 1). */
-export function isFulfilled(data: Uint8Array): boolean {
-  return data[8] === 1 && data.length >= 137;
-}
-
-/** The first SlotHashes entry strictly after `slot`, as the program reads it, or null. */
-export function firstSlotHashAfter(
-  slotHashes: Uint8Array,
-  slot: bigint,
-): { slot: bigint; hash: Uint8Array } | null {
-  const view = new DataView(slotHashes.buffer, slotHashes.byteOffset, slotHashes.byteLength);
-  const n = Number(view.getBigUint64(0, true));
-  let found: { slot: bigint; hash: Uint8Array } | null = null;
-  // Entries are newest first: walk until the first one at or before `slot`.
-  for (let i = 0; i < n; i++) {
-    const off = 8 + i * 40;
-    if (off + 40 > slotHashes.length) break;
-    const s = view.getBigUint64(off, true);
-    if (s <= slot) break;
-    found = { slot: s, hash: slotHashes.slice(off + 8, off + 40) };
-  }
-  return found;
-}
-
-/** `SHA256("FADE/ORAO-SEED/v1" ‖ program ‖ ticket ‖ open_slot ‖ s* ‖ h*)` (Technical Specification §3.6). */
-export async function oraoSeed(
-  ticket: Address,
-  openSlot: bigint,
-  entropySlot: bigint,
-  entropyHash: Uint8Array,
-): Promise<Uint8Array> {
-  const parts = [
-    new TextEncoder().encode("FADE/ORAO-SEED/v1"),
-    bytes(PROGRAM),
-    bytes(ticket),
-    u64(openSlot),
-    u64(entropySlot),
-    entropyHash,
-  ];
-  const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of parts) {
-    all.set(p, at);
-    at += p.length;
-  }
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", all));
 }
 
 // --- sending ------------------------------------------------------------------------------

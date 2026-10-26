@@ -51,10 +51,14 @@ fn a_tightening_change_applies_at_once() {
     let mut p = RiskParams::SPEC;
     p.censorship_bps = 100;
     p.min_price = 30 * USDC;
+    let treasury = env.config().protocol_treasury;
     env.set_params(p).unwrap();
     let c = env.config();
     assert_eq!(c.params, p);
     assert!(!c.pending.active);
+    // Applied through the same path as `apply_params`: the treasury it names,
+    // the current one, stays.
+    assert_eq!(c.protocol_treasury, treasury);
 }
 
 #[test]

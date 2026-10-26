@@ -8,7 +8,11 @@ use fade_math::epoch::{Counters, Side};
 use fade_math::shares::INDEX_SCALE;
 use fade_math::BPS;
 
-use crate::constants::{DELAY_24H, DELAY_7D, MIN_T_SETTLE_SLOTS};
+use crate::constants::{
+    DELAY_24H, DELAY_7D, MAX_EPOCH_LENGTH_SECONDS, MAX_REFUND_SLOTS, MAX_ROUND_K, MAX_TICK_SLOTS,
+    MIN_KAPPA_BPS, MIN_T_SETTLE_SLOTS,
+};
+use crate::errors::FadeError;
 
 /// Governable parameters: the Technical Specification's §2 table. Settlement
 /// never reads them; everything a ticket needs is snapshotted at open.
@@ -61,6 +65,19 @@ pub struct RiskParams {
     pub credit_enabled: bool,
     pub credit_base: u64,
     pub credit_rate_bps: u64,
+    // --- shared beacon (Spec 08 §13.3); every one snapshotted by a round at its creation
+    /// Smallest beacon ticket price, USDC base units.
+    pub beacon_min_price: u64,
+    /// `T_r`: the ticket prices that pay a round's whole draw, USDC base units.
+    pub beacon_threshold: u64,
+    /// `k`: per-ticket caps a paid round may carry; at most `MAX_ROUND_K`.
+    pub round_k: u64,
+    /// A paid round closes at the next multiple of `tick_slots`.
+    pub tick_slots: u64,
+    /// Slots after a round's latest join from which an unpaid round may be refunded.
+    pub refund_slots: u64,
+    /// Settlement share of a beacon ticket, paid to whoever settles or returns it, lamports.
+    pub crank_round_settle_lamports: u64,
 }
 
 impl RiskParams {
@@ -91,6 +108,12 @@ impl RiskParams {
         credit_enabled: false,
         credit_base: 0,
         credit_rate_bps: 0,
+        beacon_min_price: 500_000,
+        beacon_threshold: 8_640_000,
+        round_k: 1,
+        tick_slots: 37,
+        refund_slots: 1_715,
+        crank_round_settle_lamports: 20_000,
     };
 
     pub fn to_math(&self) -> fade_math::risk::Params {
@@ -118,14 +141,16 @@ impl RiskParams {
 
     /// Range checks: every ratio within 100 %, bounds ordered, nothing zero that
     /// would disable a protection. `T_SETTLE` stays well inside the 512 slots
-    /// SlotHashes keeps, so the entropy slot is always still readable.
+    /// SlotHashes keeps, so the entropy slot is always still readable. κ is
+    /// never below `MIN_KAPPA_BPS`: the strike's κ term then holds back at
+    /// most 1.25 times the reserved liability.
     pub fn is_valid(&self) -> bool {
         let ratio = |v: u64| (1..=BPS).contains(&v);
         ratio(self.kelly_fraction_bps)
             && ratio(self.censorship_bps)
             && ratio(self.whale_bps)
             && ratio(self.utilisation_breaker_bps)
-            && ratio(self.kappa_bps)
+            && (MIN_KAPPA_BPS..=BPS).contains(&self.kappa_bps)
             && self.drawdown_bps >= 1
             && self.drawdown_bps < BPS
             && self.min_price >= 1
@@ -137,11 +162,23 @@ impl RiskParams {
                 .saturating_add(self.max_app_share_bps)
                 <= BPS
             && (MIN_T_SETTLE_SLOTS..=400).contains(&self.t_settle_slots)
-            && (60..=86_400).contains(&self.epoch_length_seconds)
+            && (60..=MAX_EPOCH_LENGTH_SECONDS).contains(&self.epoch_length_seconds)
             && self.fund_target_lamports >= self.strike_reward_lamports
             && self.min_deposit >= 1
             && self.min_withdraw_shares >= 1
             && self.min_first_deposit >= self.min_deposit
+            && self.beacon_is_valid()
+    }
+
+    /// The beacon's ranges (Spec 08 §13.3). `round_k` is bounded by a program
+    /// constant, so no parameter change can raise it above `MAX_ROUND_K`.
+    fn beacon_is_valid(&self) -> bool {
+        (1..=self.max_price).contains(&self.beacon_min_price)
+            && (self.beacon_min_price..=self.max_price).contains(&self.beacon_threshold)
+            && (1..=u64::from(MAX_ROUND_K)).contains(&self.round_k)
+            && (1..=MAX_TICK_SLOTS).contains(&self.tick_slots)
+            && (self.tick_slots..=MAX_REFUND_SLOTS).contains(&self.refund_slots)
+            && (1..=self.crank_settle_lamports).contains(&self.crank_round_settle_lamports)
     }
 
     /// Seconds a change from `self` to `new` must wait (Spec 05 §3): zero when
@@ -164,14 +201,15 @@ impl RiskParams {
             n.utilisation_breaker_bps > o.utilisation_breaker_bps,
             DELAY_24H,
         );
-        loosens(n.kappa_bps > o.kappa_bps, DELAY_24H);
         loosens(n.drawdown_bps > o.drawdown_bps, DELAY_24H);
         loosens(n.max_price > o.max_price, DELAY_24H);
         loosens(n.max_app_share_bps > o.max_app_share_bps, DELAY_24H);
         // Floors and minimums: lowering loosens.
         loosens(n.min_price < o.min_price, DELAY_24H);
         loosens(n.min_first_deposit < o.min_first_deposit, DELAY_24H);
-        // Windows: shortening loosens.
+        // Windows: shortening loosens. Lengthening the epoch applies at once
+        // because `is_valid` bounds it (`MAX_EPOCH_LENGTH_SECONDS`) well below
+        // this delay, so a loosening's notice still leaves LPs a strike.
         loosens(n.t_settle_slots < o.t_settle_slots, DELAY_24H);
         loosens(n.epoch_length_seconds < o.epoch_length_seconds, DELAY_24H);
         // A cut of the LP's share waits the longest.
@@ -193,10 +231,25 @@ impl RiskParams {
             DELAY_24H,
         );
         loosens(n.fund_target_lamports != o.fund_target_lamports, DELAY_24H);
+        // Either way: a higher κ loosens admission, a lower κ holds back more
+        // LP capital at the strike.
+        loosens(n.kappa_bps != o.kappa_bps, DELAY_24H);
         // Progressive credit: switching it on, or lowering its constants, only refuses.
         loosens(o.credit_enabled && !n.credit_enabled, DELAY_24H);
         loosens(n.credit_base > o.credit_base, DELAY_24H);
         loosens(n.credit_rate_bps > o.credit_rate_bps, DELAY_24H);
+        // The beacon (Spec 09 §11): a lower threshold or minimum, a larger
+        // `k`, a shorter tick or refund window loosen; the settlers' pay moves
+        // liveness either way, like `strike_reward_lamports`.
+        loosens(n.beacon_min_price < o.beacon_min_price, DELAY_24H);
+        loosens(n.beacon_threshold < o.beacon_threshold, DELAY_24H);
+        loosens(n.round_k > o.round_k, DELAY_24H);
+        loosens(n.tick_slots < o.tick_slots, DELAY_24H);
+        loosens(n.refund_slots < o.refund_slots, DELAY_24H);
+        loosens(
+            n.crank_round_settle_lamports != o.crank_round_settle_lamports,
+            DELAY_24H,
+        );
         delay
     }
 }
@@ -236,8 +289,13 @@ impl Config {
     pub const PAUSE_DEPOSITS: u8 = 1 << 1;
     /// Refuses an `open_ticket` that would create an integrator record.
     pub const PAUSE_NEW_INTEGRATORS: u8 = 1 << 2;
-    pub const PAUSE_ALL: u8 =
-        Self::PAUSE_TICKETS | Self::PAUSE_DEPOSITS | Self::PAUSE_NEW_INTEGRATORS;
+    /// Refuses `join_round`: stops the beacon alone, for a defect in it
+    /// (Spec 08 §13.7). `PAUSE_TICKETS` stops both paths.
+    pub const PAUSE_ROUNDS: u8 = 1 << 3;
+    pub const PAUSE_ALL: u8 = Self::PAUSE_TICKETS
+        | Self::PAUSE_DEPOSITS
+        | Self::PAUSE_NEW_INTEGRATORS
+        | Self::PAUSE_ROUNDS;
 
     pub fn is_paused(&self, flag: u8) -> bool {
         self.pause_flags & flag != 0
@@ -279,7 +337,36 @@ pub struct Vault {
     /// leaves them out of its price; they are the next epoch's (Spec 08 §4 rule 5).
     pub after_close_gain: u64,
     pub after_close_loss: u64,
-    pub _reserved: [u8; 112],
+    // --- shared beacon (Spec 08 §13.2.6), taken from the reserved tail ---------
+    /// Id of the round accepting tickets, or 0.
+    pub accepting_round: u64,
+    /// Id the next round created receives; starts at 1.
+    pub next_round_id: u64,
+    /// Protocol and app shares of beacon tickets joined and not yet settled,
+    /// returned or forfeited: in `vault_usdc`, outside `total_assets`.
+    pub beacon_shares_held: u64,
+    /// Protocol shares of settled and forfeited beacon tickets, not yet claimed.
+    pub protocol_shares_accrued: u64,
+    /// `Σ Integrator.app_shares_accrued`.
+    pub app_shares_owed: u64,
+    /// Ticket prices of refunded rounds' tickets not yet returned.
+    pub beacon_returns_owed: u64,
+    /// Rounds `expire_round` has forfeited, ever.
+    pub rounds_forfeited: u64,
+    /// The expiries a withheld draw may explain: every forfeiture but one of
+    /// a round never requested whose request the program looked for and did
+    /// not find (`RoundExpired`'s `!requested && checked && !request_found`,
+    /// the keepers' failure), and every round `expire_round` refunded because
+    /// its entropy was never recorded and SlotHashes no longer proves it
+    /// (`RoundExpired.refunded`). A durable count, so that an alarm never has
+    /// to infer a withheld draw from transaction history it could not read.
+    pub forfeits_withheld: u64,
+    /// The direct expiries a withheld draw may explain, by the same rule as
+    /// `forfeits_withheld` (`TicketExpired`'s `requested || request_found ||
+    /// !checked`, every refund included), kept apart so that each path's
+    /// alarm accounts for its own ordinals. Taken from the reserved tail.
+    pub ticket_forfeits_withheld: u64,
+    pub _reserved: [u8; 40],
 }
 
 impl Vault {
@@ -529,7 +616,10 @@ pub struct Integrator {
     /// Set by the guardian or the council: this integrator's new tickets are refused.
     pub paused: bool,
     pub created_at: i64,
-    pub _reserved: [u8; 64],
+    /// App shares of its settled and forfeited beacon tickets, not yet claimed
+    /// (Spec 08 §13.2.6); taken from the reserved tail.
+    pub app_shares_accrued: u64,
+    pub _reserved: [u8; 56],
 }
 
 #[derive(
@@ -590,11 +680,15 @@ pub struct Ticket {
     pub crank_settle_lamports: u64,
     /// The ORAO request account, bound by `request_randomness`.
     pub randomness: Pubkey,
+    /// `s*`, `h*` and the ORAO seed, recorded by `record_ticket_entropy` or
+    /// `request_randomness`; all zero until then.
     pub entropy_slot: u64,
     pub entropy_hash: [u8; 32],
     pub seed: [u8; 32],
+    /// The outcome drawn, or `REFUND_OUTCOME` for a refund parked in
+    /// `payout_escrow`; 0 until either.
     pub outcome: u8,
-    /// Set when the payout waits in `payout_escrow`.
+    /// Set when the payout (or the refunded credit) waits in `payout_escrow`.
     pub payout: u64,
     pub payout_table_len: u8,
     pub payout_table: [Outcome; 32],
@@ -619,6 +713,13 @@ impl Ticket {
         }
     }
 
+    /// Whether the ticket's seed is recorded, by `record_ticket_entropy` or
+    /// `request_randomness`: `s*` follows the open, so a recorded entropy slot
+    /// is never 0, and `open_ticket` leaves it 0.
+    pub fn entropy_recorded(&self) -> bool {
+        self.entropy_slot != 0
+    }
+
     pub fn outcomes(&self) -> Vec<fade_math::payout_table::Outcome> {
         self.payout_table
             .iter()
@@ -626,6 +727,283 @@ impl Ticket {
             .map(|b| fade_math::payout_table::Outcome { p: b.p, m: b.m })
             .collect()
     }
+}
+
+// --- shared beacon (Spec 08 §13.2) ---------------------------------------------
+
+/// A payout table stored once, at `["payout-table", hash]` (Spec 08 §13.2.1).
+/// Immutable and never closed: a beacon ticket stores its address instead of
+/// its outcomes. It holds no share and no margin floor, which depend on the
+/// ticket's app share and the live parameters and are checked at each join.
+#[account]
+#[derive(InitSpace)]
+pub struct PayoutTable {
+    pub version: u8,
+    pub bump: u8,
+    pub len: u8,
+    /// `Σ p·m` of the outcomes, from `payout_table::validate`.
+    pub lhs: u128,
+    /// The largest multiplier, in bps.
+    pub max_m: u64,
+    /// `SHA256("FADE/PAYOUT-TABLE/v1" ‖ len ‖ p₀ ‖ m₀ ‖ …)`, little-endian `u64`s.
+    pub hash: [u8; 32],
+    pub outcomes: [Outcome; 32],
+}
+
+impl PayoutTable {
+    pub fn outcomes(&self) -> Vec<fade_math::payout_table::Outcome> {
+        self.outcomes
+            .iter()
+            .take(usize::from(self.len))
+            .map(|b| fade_math::payout_table::Outcome { p: b.p, m: b.m })
+            .collect()
+    }
+}
+
+/// Where a round stands (Spec 08 §13.2.2). "Closed" is not a state: a `Paid`
+/// round is closed from `close_slot` on, computed from the slot.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub enum RoundStatus {
+    /// Unpaid; accepts joins and sponsorship.
+    Accepting,
+    /// Draw covered; accepts joins while `slot < close_slot`, and sponsorship
+    /// until the request; never refunded by `refund_round` (only by
+    /// `expire_round`, when its entropy was never recorded and SlotHashes no
+    /// longer proves it). Recorded in the epoch counters from
+    /// the instruction that paid it, each later join added to the same counter.
+    Paid,
+    /// ORAO request sent.
+    Requested,
+    /// Randomness read and draw cost fixed; tickets settling.
+    Drawn,
+    /// Unpaid round refunded, or a paid one `expire_round` refunded because
+    /// its draw can no longer be found; tickets being returned.
+    Refunded,
+    /// Closed round unrequested or unfulfilled at `T_SETTLE`.
+    Forfeited,
+}
+
+/// One draw shared by the tickets that joined it, at `["round", id]`
+/// (Spec 08 §13.2.2). Prepays and sponsorship are held in its lamports.
+#[account]
+#[derive(InitSpace)]
+pub struct Round {
+    pub version: u8,
+    pub bump: u8,
+    /// Bump of `["round-vrf", round]`.
+    pub vrf_bump: u8,
+    pub status: RoundStatus,
+    pub id: u64,
+    /// Advanced the round's rent; receives it, with the dust, at close.
+    pub rent_payer: Pubkey,
+    // --- clock ---------------------------------------------------------------------
+    /// Slot of the first join.
+    pub first_slot: u64,
+    /// Slot in which the round became paid; 0 until then.
+    pub paid_slot: u64,
+    /// First tick boundary after `paid_slot`; 0 until paid.
+    pub close_slot: u64,
+    // --- snapshot at creation (Spec 09 §3) -------------------------------------------
+    /// `T_r`, USDC base units.
+    pub threshold: u64,
+    /// `D_r`, lamports: two ORAO fees, a pending request's rent and the request share.
+    pub draw_max: u64,
+    pub round_k: u8,
+    pub min_price: u64,
+    pub settle_share: u64,
+    pub request_share: u64,
+    pub tick_slots: u64,
+    pub refund_slots: u64,
+    pub t_settle_slots: u64,
+    pub drawdown_bps: u64,
+    // --- aggregates ------------------------------------------------------------------
+    /// `R`: ticket prices of every ticket that joined.
+    pub prices: u64,
+    /// `S`: sponsorship received, lamports.
+    pub sponsorship: u64,
+    pub liability: u64,
+    pub credits: u64,
+    pub protocol_shares: u64,
+    pub app_shares: u64,
+    /// Prepays held on the round and not yet returned, lamports.
+    pub prepaid: u64,
+    /// `U`: Σ of the tickets' capacity usage, `USAGE_SCALE` fixed point.
+    pub usage: u64,
+    /// Tickets joined and not yet settled or returned.
+    pub tickets: u32,
+    /// Sponsorships not yet reclaimed.
+    pub sponsors: u32,
+    // --- epoch (Spec 08 §13.7) -------------------------------------------------------------
+    /// Recorded in the epoch counters.
+    pub counted: bool,
+    pub side: u8,
+    pub generation: u32,
+    // --- draw ---------------------------------------------------------------------------
+    /// The ORAO request account.
+    pub randomness: Pubkey,
+    /// The round's seed and its entropy slot `s*`, recorded while SlotHashes
+    /// proves `s*` by `record_round_entropy`, `request_round_draw` or the
+    /// expiry that looked for its request; zero until then. Once recorded,
+    /// the round's ORAO request address no longer depends on SlotHashes.
+    pub seed: [u8; 32],
+    pub entropy_slot: u64,
+    /// Lamports moved to `round_vrf` for the request.
+    pub funded: u64,
+    /// `C`, fixed by the first settlement or the expiry.
+    pub draw_cost: u64,
+    /// `R`, the request's randomness, kept by the first settlement; zero
+    /// until then. Every later batch reads it here, so that a drawn round
+    /// never depends on ORAO's account staying readable (invariant 10).
+    pub drawn_randomness: [u8; 64],
+    /// Slot of the latest join; the refund window counts from it (Spec 09 §6
+    /// as built). Taken from the spare tail: a round written before it reads
+    /// 0, and `refund_from` then counts from `first_slot`.
+    pub last_join_slot: u64,
+    pub _reserved: [u8; 24],
+}
+
+impl Round {
+    /// The slot the refund window counts from: the latest join's, so that a
+    /// round still gathering tickets is never refundable.
+    pub fn refund_from(&self) -> u64 {
+        self.first_slot.max(self.last_join_slot)
+    }
+
+    /// Whether the round's seed is recorded: `s*` follows the close, so a
+    /// recorded entropy slot is never 0.
+    pub fn entropy_recorded(&self) -> bool {
+        self.entropy_slot != 0
+    }
+
+    /// The terms the round runs on, from its snapshot.
+    pub fn terms(&self) -> fade_math::beacon::Terms {
+        fade_math::beacon::Terms {
+            threshold: self.threshold,
+            draw_max: self.draw_max,
+            round_k: self.round_k,
+        }
+    }
+
+    /// The aggregates the capacity and payment rules read.
+    pub fn book(&self) -> fade_math::beacon::Book {
+        fade_math::beacon::Book {
+            prices: self.prices,
+            sponsorship: self.sponsorship,
+            usage: self.usage,
+            liability: self.liability,
+            credits: self.credits,
+            protocol_shares: self.protocol_shares,
+            app_shares: self.app_shares,
+            prepaid: self.prepaid,
+            tickets: self.tickets,
+        }
+    }
+
+    pub fn set_book(&mut self, b: &fade_math::beacon::Book) {
+        self.prices = b.prices;
+        self.sponsorship = b.sponsorship;
+        self.usage = b.usage;
+        self.liability = b.liability;
+        self.credits = b.credits;
+        self.protocol_shares = b.protocol_shares;
+        self.app_shares = b.app_shares;
+        self.prepaid = b.prepaid;
+        self.tickets = b.tickets;
+    }
+
+    /// The round takes a join at `slot`: unpaid, or paid and not yet closed.
+    pub fn accepts_joins(&self, slot: u64) -> bool {
+        match self.status {
+            RoundStatus::Accepting => true,
+            RoundStatus::Paid => fade_math::beacon::accepts_joins(slot, self.close_slot),
+            _ => false,
+        }
+    }
+
+    /// Records the round in the epoch counters' `side` and `generation`, as
+    /// `counters.open_n` returned them when the round became paid (Spec 08
+    /// §13.7).
+    pub fn record(&mut self, side: Side, generation: u32) {
+        self.counted = true;
+        self.side = match side {
+            Side::BeforeClose => Ticket::SIDE_BEFORE,
+            Side::AfterClose => Ticket::SIDE_AFTER,
+        };
+        self.generation = generation;
+    }
+
+    /// The side the round's tickets were counted on. Fails closed: a round not
+    /// yet recorded in the epoch counters has no side (its zeroed `side` would
+    /// otherwise read as before-close and release tickets the counters never
+    /// held), and a value that is neither side is refused, not guessed.
+    pub fn side(&self) -> Result<Side> {
+        require!(self.counted, FadeError::WrongRoundStatus);
+        match self.side {
+            Ticket::SIDE_BEFORE => Ok(Side::BeforeClose),
+            Ticket::SIDE_AFTER => Ok(Side::AfterClose),
+            _ => err!(FadeError::WrongRoundStatus),
+        }
+    }
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub enum RoundTicketStatus {
+    /// In its round, until the round is drawn, refunded or forfeited.
+    Joined,
+    /// Settled; the payout waits in `payout_escrow` for `claim_round_payout`.
+    PayoutParked,
+    /// Returned; the ticket price waits in `payout_escrow` for `claim_round_payout`.
+    ReturnParked,
+}
+
+/// A beacon ticket, at `["round-ticket", integrator, nonce]` (Spec 08 §13.2.4).
+/// Lean: the payout table is referenced by address, and everything common to
+/// the round is on the round.
+#[account]
+#[derive(InitSpace)]
+pub struct RoundTicket {
+    pub version: u8,
+    pub bump: u8,
+    pub status: RoundTicketStatus,
+    /// The round's id.
+    pub round: u64,
+    pub integrator: Pubkey,
+    pub nonce: u64,
+    /// Paid the rent, the prepay and the settlement share; gets back what is not spent.
+    pub payer: Pubkey,
+    /// Signed for the ticket price.
+    pub funder: Pubkey,
+    /// The funder's token account: where a refund returns the ticket price.
+    pub refund_to: Pubkey,
+    /// Stored at the join, immutable: the only account a payout can go to.
+    pub beneficiary: Pubkey,
+    /// The `PayoutTable` account.
+    pub payout_table: Pubkey,
+    pub price: u64,
+    pub vault_credit: u64,
+    pub payout_max: u64,
+    pub liability: u64,
+    pub protocol_share: u64,
+    pub app_share: u64,
+    /// Lamports held on the round for the draw.
+    pub prepay: u64,
+    /// Lamports held on this account above its rent, for whoever settles or returns it.
+    pub settle_share: u64,
+    /// Set when the payout or the return is parked.
+    pub payout: u64,
+}
+
+/// One sponsor's lamports in one round, at `["sponsorship", round, sponsor]`
+/// (Spec 08 §13.2.5). A second sponsorship by the same sponsor tops it up.
+#[account]
+#[derive(InitSpace)]
+pub struct Sponsorship {
+    pub version: u8,
+    pub bump: u8,
+    /// The round's id.
+    pub round: u64,
+    pub sponsor: Pubkey,
+    pub amount: u64,
 }
 
 #[cfg(test)]
@@ -649,6 +1027,16 @@ mod tests {
         );
         let mut p = RiskParams::SPEC;
         p.fund_target_lamports = p.strike_reward_lamports - 1;
+        assert!(!p.is_valid());
+        // The epoch stays well below the shortest loosening delay, so the
+        // instant lengthening cannot outrun a 24-hour notice.
+        let mut p = RiskParams::SPEC;
+        p.epoch_length_seconds = MAX_EPOCH_LENGTH_SECONDS;
+        assert!(p.is_valid());
+        assert_eq!(MAX_EPOCH_LENGTH_SECONDS, 21_600);
+        p.epoch_length_seconds = MAX_EPOCH_LENGTH_SECONDS + 1;
+        assert!(!p.is_valid(), "an epoch near the notice is refused");
+        p.epoch_length_seconds = 86_400;
         assert!(!p.is_valid());
     }
 
@@ -682,6 +1070,278 @@ mod tests {
             }),
             DELAY_7D
         );
+    }
+
+    #[test]
+    fn kappa_has_a_floor_and_waits_either_way() {
+        let mut p = RiskParams::SPEC;
+        p.kappa_bps = MIN_KAPPA_BPS;
+        assert!(p.is_valid());
+        p.kappa_bps = MIN_KAPPA_BPS - 1;
+        assert!(!p.is_valid(), "κ below the floor is refused");
+        p.kappa_bps = 77;
+        assert!(!p.is_valid());
+        p.kappa_bps = BPS + 1;
+        assert!(!p.is_valid());
+
+        // 8 000 → 9 000 → 8 000: a day's notice in both directions.
+        let low = RiskParams::SPEC;
+        let mut high = low;
+        high.kappa_bps = 9_000;
+        assert_eq!(low.change_delay(&high), DELAY_24H);
+        assert_eq!(high.change_delay(&low), DELAY_24H);
+        // A cut bundled with a raise of the protocol share waits its 7 days.
+        let mut bundled = high;
+        bundled.kappa_bps = 8_000;
+        bundled.protocol_share_bps += 10;
+        assert_eq!(high.change_delay(&bundled), DELAY_7D);
+    }
+
+    #[test]
+    fn beacon_params_are_range_checked() {
+        let spec = RiskParams::SPEC;
+        let with = |f: &dyn Fn(&mut RiskParams)| {
+            let mut p = spec;
+            f(&mut p);
+            p.is_valid()
+        };
+        // The boundaries of Spec 08 §13.3 are inclusive.
+        assert!(with(&|p| p.beacon_min_price = 1));
+        assert!(with(&|p| {
+            p.beacon_min_price = p.max_price;
+            p.beacon_threshold = p.max_price;
+        }));
+        assert!(with(&|p| p.beacon_threshold = p.beacon_min_price));
+        assert!(with(&|p| p.tick_slots = 1));
+        assert!(with(&|p| {
+            p.tick_slots = MAX_TICK_SLOTS;
+            p.refund_slots = MAX_TICK_SLOTS;
+        }));
+        assert!(with(&|p| p.refund_slots = MAX_REFUND_SLOTS));
+        assert!(with(&|p| p.crank_round_settle_lamports = 1));
+        assert!(with(
+            &|p| p.crank_round_settle_lamports = p.crank_settle_lamports
+        ));
+        // And everything outside them is refused.
+        assert!(!with(&|p| p.beacon_min_price = 0));
+        assert!(!with(&|p| p.beacon_min_price = p.beacon_threshold + 1));
+        assert!(!with(&|p| p.beacon_threshold = p.max_price + 1));
+        assert!(!with(&|p| p.round_k = 0));
+        assert!(
+            !with(&|p| p.round_k = u64::from(MAX_ROUND_K) + 1),
+            "raising k takes an upgrade"
+        );
+        assert!(!with(&|p| p.tick_slots = 0));
+        assert!(!with(&|p| {
+            p.tick_slots = MAX_TICK_SLOTS + 1;
+            p.refund_slots = MAX_REFUND_SLOTS;
+        }));
+        assert!(!with(&|p| p.refund_slots = p.tick_slots - 1));
+        assert!(!with(&|p| p.refund_slots = MAX_REFUND_SLOTS + 1));
+        assert!(!with(&|p| p.crank_round_settle_lamports = 0));
+        assert!(!with(
+            &|p| p.crank_round_settle_lamports = p.crank_settle_lamports + 1
+        ));
+        // A direct-path change that leaves the beacon's ranges is refused too.
+        assert!(!with(&|p| p.max_price = p.beacon_threshold - 1));
+        assert!(!with(
+            &|p| p.crank_settle_lamports = p.crank_round_settle_lamports - 1
+        ));
+    }
+
+    #[test]
+    fn beacon_delays_follow_spec_09() {
+        let o = RiskParams::SPEC;
+        let with = |f: &dyn Fn(&mut RiskParams)| {
+            let mut n = o;
+            f(&mut n);
+            o.change_delay(&n)
+        };
+        // Tightening applies at once.
+        assert_eq!(with(&|n| n.beacon_min_price += 1), 0);
+        assert_eq!(with(&|n| n.beacon_threshold += 1), 0);
+        assert_eq!(with(&|n| n.tick_slots += 1), 0);
+        assert_eq!(with(&|n| n.refund_slots += 1), 0);
+        // Loosening waits 24 hours.
+        assert_eq!(with(&|n| n.beacon_min_price -= 1), DELAY_24H);
+        assert_eq!(with(&|n| n.beacon_threshold -= 1), DELAY_24H);
+        assert_eq!(with(&|n| n.round_k += 1), DELAY_24H);
+        assert_eq!(with(&|n| n.tick_slots -= 1), DELAY_24H);
+        assert_eq!(with(&|n| n.refund_slots -= 1), DELAY_24H);
+        // The settlers' pay waits either way.
+        assert_eq!(with(&|n| n.crank_round_settle_lamports += 1), DELAY_24H);
+        assert_eq!(with(&|n| n.crank_round_settle_lamports -= 1), DELAY_24H);
+        // Lowering `k` tightens.
+        let mut two = o;
+        two.round_k = 2;
+        assert_eq!(two.change_delay(&o), 0);
+    }
+
+    #[test]
+    fn pause_rounds_is_its_own_bit_and_part_of_pause_all() {
+        assert_eq!(Config::PAUSE_ROUNDS, 1 << 3);
+        for f in [
+            Config::PAUSE_TICKETS,
+            Config::PAUSE_DEPOSITS,
+            Config::PAUSE_NEW_INTEGRATORS,
+        ] {
+            assert_eq!(f & Config::PAUSE_ROUNDS, 0);
+        }
+        assert_eq!(Config::PAUSE_ALL, 0b1111);
+    }
+
+    #[test]
+    fn a_round_accepts_joins_until_its_close_slot() {
+        let mut r = Round {
+            version: 1,
+            bump: 0,
+            vrf_bump: 0,
+            status: RoundStatus::Accepting,
+            id: 1,
+            rent_payer: Pubkey::default(),
+            first_slot: 10,
+            paid_slot: 0,
+            close_slot: 0,
+            threshold: 8_640_000,
+            draw_max: 1_660_392,
+            round_k: 1,
+            min_price: 500_000,
+            settle_share: 20_000,
+            request_share: 50_000,
+            tick_slots: 37,
+            refund_slots: 1_715,
+            t_settle_slots: 150,
+            drawdown_bps: 1_500,
+            prices: 0,
+            sponsorship: 0,
+            liability: 0,
+            credits: 0,
+            protocol_shares: 0,
+            app_shares: 0,
+            prepaid: 0,
+            usage: 0,
+            tickets: 0,
+            sponsors: 0,
+            counted: false,
+            side: 0,
+            generation: 0,
+            randomness: Pubkey::default(),
+            seed: [0; 32],
+            entropy_slot: 0,
+            funded: 0,
+            draw_cost: 0,
+            drawn_randomness: [0; 64],
+            last_join_slot: 0,
+            _reserved: [0; 24],
+        };
+        assert!(r.accepts_joins(u64::MAX), "an unpaid round has no close");
+        r.status = RoundStatus::Paid;
+        r.paid_slot = 73;
+        r.close_slot = fade_math::beacon::close_slot(73, 37).unwrap();
+        assert_eq!(r.close_slot, 74);
+        assert!(r.accepts_joins(73));
+        assert!(!r.accepts_joins(74), "no join at the close slot");
+        for s in [
+            RoundStatus::Requested,
+            RoundStatus::Drawn,
+            RoundStatus::Refunded,
+            RoundStatus::Forfeited,
+        ] {
+            r.status = s;
+            assert!(!r.accepts_joins(0));
+        }
+        // The book round-trips through the account.
+        let book = fade_math::beacon::Book {
+            prices: 1,
+            sponsorship: 2,
+            usage: 3,
+            liability: 4,
+            credits: 5,
+            protocol_shares: 6,
+            app_shares: 7,
+            prepaid: 8,
+            tickets: 9,
+        };
+        r.set_book(&book);
+        assert_eq!(r.book(), book);
+        assert_eq!(
+            r.terms(),
+            fade_math::beacon::Terms {
+                threshold: 8_640_000,
+                draw_max: 1_660_392,
+                round_k: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_round_has_a_side_only_once_counted() {
+        let mut r = Round {
+            version: 1,
+            bump: 0,
+            vrf_bump: 0,
+            status: RoundStatus::Paid,
+            id: 1,
+            rent_payer: Pubkey::default(),
+            first_slot: 0,
+            paid_slot: 0,
+            close_slot: 0,
+            threshold: 0,
+            draw_max: 0,
+            round_k: 1,
+            min_price: 0,
+            settle_share: 0,
+            request_share: 0,
+            tick_slots: 0,
+            refund_slots: 0,
+            t_settle_slots: 0,
+            drawdown_bps: 0,
+            prices: 0,
+            sponsorship: 0,
+            liability: 0,
+            credits: 0,
+            protocol_shares: 0,
+            app_shares: 0,
+            prepaid: 0,
+            usage: 0,
+            tickets: 3,
+            sponsors: 0,
+            counted: false,
+            side: 0,
+            generation: 0,
+            randomness: Pubkey::default(),
+            seed: [0; 32],
+            entropy_slot: 0,
+            funded: 0,
+            draw_cost: 0,
+            drawn_randomness: [0; 64],
+            last_join_slot: 0,
+            _reserved: [0; 24],
+        };
+        let wrong_status: Error = FadeError::WrongRoundStatus.into();
+        // Never recorded: the zeroed side is not read as before-close.
+        assert_eq!(r.side().unwrap_err(), wrong_status);
+        r.side = Ticket::SIDE_AFTER;
+        assert_eq!(r.side().unwrap_err(), wrong_status);
+        // Recorded: each side maps to itself, with its generation.
+        r.record(Side::BeforeClose, 4);
+        assert_eq!((r.counted, r.side, r.generation), (true, 0, 4));
+        assert_eq!(r.side().unwrap(), Side::BeforeClose);
+        r.record(Side::AfterClose, 5);
+        assert_eq!((r.counted, r.side, r.generation), (true, 1, 5));
+        assert_eq!(r.side().unwrap(), Side::AfterClose);
+        // A value that is neither side is refused, not guessed.
+        r.side = 2;
+        assert_eq!(r.side().unwrap_err(), wrong_status);
+    }
+
+    #[test]
+    fn the_beacon_tags_are_fade_maths() {
+        use crate::constants::{BEACON_OUTCOME_TAG, BEACON_SEED_TAG, PAYOUT_TABLE_TAG};
+        assert_eq!(BEACON_SEED_TAG, fade_math::beacon::SEED_TAG);
+        assert_eq!(PAYOUT_TABLE_TAG, fade_math::beacon::PAYOUT_TABLE_TAG);
+        assert_eq!(BEACON_OUTCOME_TAG, fade_math::beacon::OUTCOME_TAG);
+        assert_eq!(u64::from(MAX_ROUND_K), 1);
     }
 
     #[test]

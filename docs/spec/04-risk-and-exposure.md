@@ -455,7 +455,9 @@ breaker, and every ticket any of them opens pays the margin and `CRANK_FEE`. The
 ceiling is therefore a concentration rule for honest integrators, not a Sybil defence; the Sybil
 defence is that capacity is held only by opening real tickets, at the cost in §4.2. Once progressive
 credit is enabled (§4.3), a fresh identity starts at `CREDIT_BASE`, so splitting multiplies only that
-small base.
+small base. The same holds for the guardian's targeted pause: it binds one record, so a party that
+enrolled several keys keeps admitting tickets through the ones not yet paused, and the control that
+needs no knowledge of its records is the global pause ([Spec 05](05-governance.md) §5c).
 
 The honest limit: a well-capitalised actor, openly one integrator or disguised as many, can reserve
 up to the 70 % gate for as long as it keeps paying for it. The utilisation gate, κ and the drawdown

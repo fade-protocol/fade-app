@@ -183,7 +183,28 @@ proptest! {
         let expected = slots.iter().copied().filter(|&s| s > t).min();
         prop_assert_eq!(slot_hashes::first_after(&data, t).map(|e| e.slot), expected);
     }
+
+    /// With κ at or above the program's floor (`MIN_KAPPA_BPS`, 0.8), the
+    /// strike never holds back more than `max(committed, ceil(1.25 · reserved))`,
+    /// the bound Spec 01 §4.3 states for κ = 0.8.
+    #[test]
+    fn withdrawals_are_held_back_at_most_a_quarter_above_the_reservation(
+        assets in 0u64..=u64::MAX / 2,
+        reserved in 0u64..=u64::MAX / 4,
+        open_credits in 0u64..=u64::MAX / 4,
+        kappa_bps in KAPPA_FLOOR_BPS..=BPS,
+    ) {
+        let params = Params { kappa_bps, ..Params::SPEC };
+        let vault = Vault { assets, reserved, open_credits };
+        let committed = reserved + open_credits;
+        let quarter_above = u64::try_from((u128::from(reserved) * 5).div_ceil(4)).unwrap();
+        let bound = assets.saturating_sub(committed.max(quarter_above));
+        prop_assert!(risk::withdrawable(&vault, &params) >= bound);
+    }
 }
+
+/// The program's `MIN_KAPPA_BPS` (programs/fade/src/constants.rs).
+const KAPPA_FLOOR_BPS: u64 = 8_000;
 
 #[test]
 fn boundary_exact_payout_table_is_rejected_by_floating_point_but_not_by_us() {
@@ -509,13 +530,14 @@ fn a_late_entrant_to_a_long_rationed_chain_is_paid_in_full() {
 }
 
 // ---------------------------------------------------------------------------
-// Shared beacon (designed, not in the program yet): the arithmetic invariants of a
+// Shared beacon (Spec 08 §13.4 and §13.8): the arithmetic invariants of a
 // round, over random terms and random sequences of joins and sponsorships,
 // then a draw, a forfeiture or a refund.
 
 mod beacon_props {
     use fade_math::beacon::{self, Book, Entry, Terms, USAGE_SCALE};
     use fade_math::epoch::{Counters, Side};
+    use fade_math::Reject;
     use num_bigint::BigUint;
     use num_rational::Ratio;
     use proptest::prelude::*;
@@ -593,18 +615,60 @@ mod beacon_props {
         }
     }
 
-    /// Exact `Σ L_i / cap_i ≤ k · min(1, R / T + S / D)`.
+    /// `1 − h`, the share of its paid capacity an unpaid round may use.
+    fn unpaid_share() -> Ratio<BigUint> {
+        Ratio::new(
+            big(fade_math::BPS - beacon::UNPAID_HEADROOM_BPS),
+            big(fade_math::BPS),
+        )
+    }
+
+    /// The exact room of a round: `k` caps once paid, `(1 − h) · k · (R / T +
+    /// S / D)` before.
+    fn exact_room(terms: &Terms, prices: u64, sponsorship: u64) -> Ratio<BigUint> {
+        let paid = Ratio::new(big(prices), big(terms.threshold))
+            + Ratio::new(big(sponsorship), big(terms.draw_max));
+        let one = Ratio::from_integer(BigUint::from(1u8));
+        let k = Ratio::from_integer(BigUint::from(terms.round_k));
+        if paid >= one {
+            k
+        } else {
+            k * unpaid_share() * paid
+        }
+    }
+
+    /// Exact share of a round one join may take: `usage / USAGE_SCALE ≤
+    /// k · min(1, price / T + sponsorship / D)`, or `h · k` if more when
+    /// `pays_round` (the join that makes the round paid).
+    fn exact_join_share(
+        terms: &Terms,
+        usage: u64,
+        price: u64,
+        sponsorship: u64,
+        pays_round: bool,
+    ) -> bool {
+        let one = Ratio::from_integer(BigUint::from(1u8));
+        let k = Ratio::from_integer(BigUint::from(terms.round_k));
+        let share = Ratio::new(big(price), big(terms.threshold))
+            + Ratio::new(big(sponsorship), big(terms.draw_max));
+        let share = if share > one { one.clone() } else { share };
+        let floor = k.clone() * (one - unpaid_share());
+        let bound = if pays_round && floor > k.clone() * share.clone() {
+            floor
+        } else {
+            k * share
+        };
+        Ratio::new(big(usage), big(USAGE_SCALE)) <= bound
+    }
+
+    /// Exact `Σ L_i / cap_i` within `exact_room`.
     fn exact_fits(terms: &Terms, tickets: &[(Entry, u64)], prices: u64, sponsorship: u64) -> bool {
         let used: Ratio<BigUint> = tickets
             .iter()
             .filter(|(e, _)| e.liability > 0)
             .map(|(e, cap)| Ratio::new(big(e.liability), big(*cap)))
             .sum();
-        let paid = Ratio::new(big(prices), big(terms.threshold))
-            + Ratio::new(big(sponsorship), big(terms.draw_max));
-        let one = Ratio::from_integer(BigUint::from(1u8));
-        let room = Ratio::from_integer(BigUint::from(terms.round_k)) * paid.min(one);
-        used <= room
+        used <= exact_room(terms, prices, sponsorship)
     }
 
     proptest! {
@@ -633,16 +697,24 @@ mod beacon_props {
                         prop_assert!(e.usage <= USAGE_SCALE);
                         let mut with = tickets.clone();
                         with.push((e, cap));
+                        let pays_round = !book.is_paid(&terms)
+                            && beacon::is_paid(&terms, book.prices + price, book.sponsorship + sp);
                         match book.join(&terms, &e, sp).unwrap() {
                             Some(after) => {
                                 // the rounded rule never admits what the exact rule refuses
                                 prop_assert!(exact_fits(&terms, &with, after.prices, after.sponsorship));
+                                // every join, paid round or not, takes at most its own
+                                // share, the `h · k` floor only the paying join's
+                                prop_assert!(exact_join_share(&terms, e.usage, price, sp, pays_round));
                                 book = after;
                                 tickets.push((e, cap));
                                 if sp > 0 { sponsors.push(sp); }
                             }
                             None => {
-                                prop_assert!(!beacon::fits(&terms, book.usage + e.usage, book.prices + price, book.sponsorship + sp));
+                                prop_assert!(
+                                    !beacon::fits(&terms, book.usage + e.usage, book.prices + price, book.sponsorship + sp)
+                                        || !beacon::within_join_share(&terms, e.usage, price, sp, pays_round)
+                                );
                             }
                         }
                     }
@@ -715,8 +787,8 @@ mod beacon_props {
             usage in any::<u64>(), prices in any::<u64>(), sponsorship in any::<u64>(),
         ) {
             let t = Terms { threshold, draw_max, round_k };
-            let paid = (big(prices) * big(draw_max) + big(sponsorship) * big(threshold)).min(big(threshold) * big(draw_max));
-            let exact = big(usage) * big(threshold) * big(draw_max) <= big(u64::from(round_k)) * big(USAGE_SCALE) * paid;
+            let exact = Ratio::from_integer(big(usage))
+                <= exact_room(&t, prices, sponsorship) * Ratio::from_integer(big(USAGE_SCALE));
             prop_assert_eq!(beacon::fits(&t, usage, prices, sponsorship), exact);
             let paid_exact = big(prices) * big(draw_max) + big(sponsorship) * big(threshold) >= big(threshold) * big(draw_max);
             prop_assert_eq!(beacon::is_paid(&t, prices, sponsorship), paid_exact);
@@ -735,6 +807,28 @@ mod beacon_props {
             let cost = (u128::from(terms.draw_max) * u128::from(cost_frac) / 1_000_000) as u64;
             let ch = beacon::charge(cost, sponsorship, prices, price).unwrap();
             prop_assert!(ch <= beacon::prepay(&terms, price).unwrap());
+        }
+
+        /// The bound the guide states: in a paid round a ticket's charge is
+        /// at most `ceil(C × price / T_r)`, its share of the draw's real cost
+        /// at the threshold, whatever the sponsorship and the round's prices,
+        /// whenever `C ≤ D_r` (the request refuses more). It is what makes the
+        /// 150 bps design point of `T` hold only at the `C` it was derived from.
+        #[test]
+        fn a_paid_round_charges_at_most_the_real_cost_at_the_threshold(
+            (terms, _, _, _) in terms(),
+            prices in 1u64..=100_000_000_000,
+            price_frac in 0u64..=1_000_000,
+            sponsorship in 0u64..=200_000_000,
+            cost_frac in 0u64..=1_000_000,
+        ) {
+            prop_assume!(beacon::is_paid(&terms, prices, sponsorship));
+            let price = (u128::from(prices) * u128::from(price_frac) / 1_000_000) as u64;
+            let cost = (u128::from(terms.draw_max) * u128::from(cost_frac) / 1_000_000) as u64;
+            let ch = beacon::charge(cost, sponsorship, prices, price).unwrap();
+            let at_threshold = (u128::from(cost) * u128::from(price))
+                .div_ceil(u128::from(terms.threshold));
+            prop_assert!(u128::from(ch) <= at_threshold);
         }
 
         #[test]
@@ -767,6 +861,169 @@ mod beacon_props {
             let before = one;
             prop_assert!(one.close_n(side, g, 1).is_err());
             prop_assert_eq!(one, before);
+        }
+
+        /// What the integration guide (§5) tells an integrator to do with a
+        /// `RoundCapacity` refusal. At a fixed multiplier a ticket's liability and
+        /// the paid fraction it brings both scale with its price, so a join the
+        /// exact rule refuses is refused at every higher price that leaves the
+        /// round unpaid; a smaller ticket at the same multiplier, a lower
+        /// multiplier at the same price, or the payment of the round (its
+        /// sponsorship, or a price that completes it) are what can make room.
+        #[test]
+        fn a_capacity_refusal_is_never_cured_by_a_higher_price(
+            (terms, _, _, _) in terms(),
+            prices in 0u64..=20_000_000_000,
+            sponsorship in 0u64..=20_000_000,
+            usage_ppm in 0u64..=1_000_000,
+            // liability per unit of price: `m − credit/price`, in whole units
+            q in 1u64..=10_000,
+            cap in 1u64..=2_000_000_000_000,
+            price in 1u64..=5_000_000_000,
+            raise in 1u64..=5_000_000_000,
+        ) {
+            // the round as it stands fits (the rule held at every earlier join)
+            let room = exact_room(&terms, prices, sponsorship)
+                * Ratio::from_integer(big(USAGE_SCALE))
+                * Ratio::new(big(usage_ppm), big(1_000_000));
+            let held = u64::try_from(room.to_integer()).unwrap();
+            prop_assert!(beacon::fits(&terms, held, prices, sponsorship));
+            let exact = |p: u64| {
+                let used = Ratio::new(big(held), big(USAGE_SCALE)) + Ratio::new(big(p) * big(q), big(cap));
+                used <= exact_room(&terms, prices + p, sponsorship)
+            };
+            let program = |p: u64, sp: u64| match beacon::usage(p * q, cap) {
+                Ok(u) => beacon::fits(&terms, held + u, prices + p, sponsorship + sp),
+                Err(_) => false,
+            };
+            if !exact(price) {
+                prop_assert!(!program(price, 0));
+                let higher = price + raise;
+                prop_assert!(
+                    !program(higher, 0) || beacon::is_paid(&terms, prices + higher, sponsorship),
+                    "a higher price that leaves the round unpaid was admitted"
+                );
+                // the sponsorship that pays the round makes room for a whole
+                // `k` caps, so the same join fits once it carries it, whenever
+                // the round's usage with it stays within them
+                let pay = beacon::sponsorship_to_pay(&terms, prices + price, sponsorship).unwrap();
+                if let Ok(u) = beacon::usage(price * q, cap) {
+                    let within = u128::from(held) + u128::from(u)
+                        <= u128::from(terms.round_k) * u128::from(USAGE_SCALE);
+                    prop_assert_eq!(program(price, pay), within);
+                }
+            }
+        }
+
+        /// `within_join_share` is the exact per-join share of a round for
+        /// every input, including at the floor and at a whole draw.
+        #[test]
+        fn the_join_share_is_exact(
+            (terms, _, _, _) in terms(),
+            usage in prop_oneof![0u64..=u64::MAX, 0u64..=2 * USAGE_SCALE],
+            price in prop_oneof![0u64..=u64::MAX, 0u64..=20_000_000_000],
+            sponsorship in prop_oneof![0u64..=u64::MAX, 0u64..=20_000_000],
+            pays_round in any::<bool>(),
+        ) {
+            prop_assert_eq!(
+                beacon::within_join_share(&terms, usage, price, sponsorship, pays_round),
+                exact_join_share(&terms, usage, price, sponsorship, pays_round)
+            );
+        }
+
+        /// The headroom (Spec 09 §7): whatever a round holds while unpaid, a
+        /// join that makes it paid and uses at most `h · k` caps fits. So no
+        /// stake that can still be refunded can refuse the join that would
+        /// make it final.
+        #[test]
+        fn a_join_that_pays_an_unpaid_round_within_the_headroom_fits(
+            (terms, _, _, _) in terms(),
+            prices_ppm in 0u64..=500_000,
+            sponsorship_ppm in 0u64..=500_000,
+            usage_ppm in 0u64..=1_000_000,
+            u_ppm in 0u64..=1_000_000,
+            extra in 0u64..=5_000_000_000,
+            by_sponsor in any::<bool>(),
+        ) {
+            let prices = (u128::from(terms.threshold) * u128::from(prices_ppm) / 1_000_000) as u64;
+            let sponsorship = (u128::from(terms.draw_max) * u128::from(sponsorship_ppm) / 1_000_000) as u64;
+            prop_assume!(!beacon::is_paid(&terms, prices, sponsorship));
+            // any reachable unpaid round: its usage within its unpaid room
+            let room = exact_room(&terms, prices, sponsorship)
+                * Ratio::from_integer(big(USAGE_SCALE))
+                * Ratio::new(big(usage_ppm), big(1_000_000));
+            let held = u64::try_from(room.to_integer()).unwrap();
+            prop_assert!(beacon::fits(&terms, held, prices, sponsorship));
+            // a join that pays it, by its price or by its sponsorship
+            let (p, sp) = if by_sponsor {
+                (0, beacon::sponsorship_to_pay(&terms, prices, sponsorship).unwrap() + extra)
+            } else {
+                (terms.threshold.saturating_sub(prices) + extra, 0)
+            };
+            prop_assert!(beacon::is_paid(&terms, prices + p, sponsorship + sp));
+            let headroom = u64::from(terms.round_k) * USAGE_SCALE / fade_math::BPS * beacon::UNPAID_HEADROOM_BPS;
+            let u = headroom * u_ppm / 1_000_000;
+            prop_assert!(beacon::fits(&terms, held + u, prices + p, sponsorship + sp));
+            prop_assert!(beacon::fits(&terms, held + headroom, prices + p, sponsorship + sp));
+            // and within the share of the join that pays the round
+            prop_assert!(beacon::within_join_share(&terms, u, p, sp, true));
+            prop_assert!(beacon::within_join_share(&terms, headroom, p, sp, true));
+        }
+
+        #[test]
+        fn a_group_joined_later_is_released_by_one_close_n(
+            close in prop_oneof![Just(0i64), 1i64..=1_000],
+            now in 0i64..=1_000,
+            n in 1u32..=50,
+            later in prop::collection::vec((0u32..=5, any::<bool>(), 0i64..=2_500), 0..8),
+        ) {
+            // A paid round recorded with `open_n`, then joins in batches of
+            // `k` at times `t`, a generation change possibly between them
+            // while the group sits in `after`: whatever the order, the group
+            // stays in one counter, one `close_n` of everything it took
+            // empties it, and `before` takes a join only before the live
+            // close (`EpochClosed` otherwise, the counters untouched).
+            let mut c = Counters { close_ts: close, ..Counters::default() };
+            let (side, g) = c.open_n(now, n).unwrap();
+            let mut total = n;
+            let mut rolled = false;
+            for (k, roll, t) in later {
+                if roll && !rolled && side == Side::AfterClose {
+                    c.roll(2_000).unwrap();
+                    rolled = true;
+                }
+                let before = c;
+                let in_before = match side {
+                    Side::BeforeClose => g == c.generation,
+                    Side::AfterClose => g.checked_add(1) == Some(c.generation),
+                };
+                let open = c.close_ts != 0 && t < c.close_ts;
+                match c.join_n(t, side, g, k) {
+                    Ok(()) => {
+                        prop_assert!(!in_before || open);
+                        prop_assert_eq!(c.before + c.after, before.before + before.after + k);
+                        prop_assert_eq!(c.after, if in_before { before.after } else { before.after + k });
+                        prop_assert_eq!(c.generation, before.generation);
+                        total += k;
+                    }
+                    Err(e) => {
+                        prop_assert_eq!(e, Reject::EpochClosed);
+                        prop_assert!(in_before && !open);
+                        prop_assert_eq!(c, before);
+                    }
+                }
+            }
+            prop_assert_eq!(c.before + c.after, total);
+            c.close_n(side, g, total).unwrap();
+            prop_assert_eq!((c.before, c.after), (0, 0));
+            // a group whose counter is gone takes nothing and changes nothing
+            if side == Side::AfterClose {
+                c.roll(3_000).unwrap();
+                c.roll(4_000).unwrap();
+                let before = c;
+                prop_assert!(c.join_n(0, side, g, 1).is_err());
+                prop_assert_eq!(c, before);
+            }
         }
     }
 }

@@ -86,6 +86,17 @@ pub fn randomness_v2(data: &[u8]) -> Option<Randomness> {
     }
 }
 
+/// The client of a pending `RandomnessV2` request: whoever paid its rent,
+/// which ORAO refunds to that address when it fulfils the request (the
+/// fulfilled account is smaller). `None` for any other account, a legacy one
+/// included: a legacy account never shrinks, so nothing is refunded there.
+pub fn pending_v2_client(data: &[u8]) -> Option<[u8; 32]> {
+    if data.get(..8)? != RANDOMNESS_V2_DISCRIMINATOR || *data.get(8)? != 0 {
+        return None;
+    }
+    data.get(9..41)?.try_into().ok()
+}
+
 /// Parses a legacy `Randomness` account: discriminator, seed (32 bytes),
 /// randomness (64 bytes, zero until the quorum answers), then the responses.
 /// It never shrinks, so fulfilled and pending have the same length.
@@ -143,6 +154,24 @@ mod tests {
         disc[0] ^= 1;
         assert_eq!(randomness_v2(&disc), None);
         assert_eq!(randomness_v2(&[]), None);
+    }
+
+    #[test]
+    fn reads_the_client_of_a_pending_v2_request_only() {
+        let mut pending = [0u8; PENDING_LEN];
+        pending[..8].copy_from_slice(&RANDOMNESS_V2_DISCRIMINATOR);
+        pending[9..41].fill(5);
+        assert_eq!(pending_v2_client(&pending), Some([5; 32]));
+        assert_eq!(pending_v2_client(&pending[..40]), None, "truncated");
+        let d = fulfilled(3, 9);
+        assert_eq!(pending_v2_client(&d), None, "fulfilled: refunded already");
+        let mut legacy = [0u8; V1_LEN];
+        legacy[..8].copy_from_slice(&RANDOMNESS_V1_DISCRIMINATOR);
+        assert_eq!(
+            pending_v2_client(&legacy),
+            None,
+            "a legacy account refunds nothing"
+        );
     }
 
     #[test]

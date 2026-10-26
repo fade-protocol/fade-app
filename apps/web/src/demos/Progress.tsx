@@ -1,7 +1,14 @@
 import { Disclosure } from "../components/disclosure";
 import { ScrollArea } from "../components/scroll";
 import { ExplorerAddress, ExplorerTx, FailureBox, Spinner, useElapsed } from "../components/ui";
-import { SLOT_MS, type FlowState, type Progress as DrawProgress } from "./useTicketFlow";
+import {
+  SLOT_MS,
+  drawDetailShown,
+  drawState,
+  takeOverOffered,
+  type FlowState,
+  type Progress as DrawProgress,
+} from "./useTicketFlow";
 
 // While the wallet is open, the time is the user's own: nothing is timed until the ticket is
 // open on chain. From then on, one row of steps and one clock for the draw.
@@ -22,13 +29,6 @@ function drawIndex(s: FlowState): number {
   if (s.progress === "requested") return 1;
   if (s.progress === "queued") return 0;
   return -1;
-}
-
-function drawState(s: FlowState): string {
-  if (s.phase === "done") return "Done";
-  if (s.phase === "expired") return "No draw in time";
-  if (s.phase === "failed") return "Stopped";
-  return "Drawing";
 }
 
 export function Progress({
@@ -53,8 +53,7 @@ export function Progress({
   const failedDrawing = s.phase === "failed" && s.failedAt === "drawing";
   const opened =
     s.phase === "drawing" || s.phase === "done" || s.phase === "expired" || failedDrawing;
-  // the line under the steps only when the wallet has something to do or delivery is late
-  const showDetail = s.phase === "drawing" && s.detail && (s.driver === "self" || s.stalled);
+  const showDetail = drawDetailShown(s);
 
   return (
     <div className="progress">
@@ -130,12 +129,20 @@ export function Progress({
       )}
       {failedDrawing && (
         <div className="actions-row">
-          <button type="button" className="btn btn-outline btn-small" onClick={onTakeOver}>
-            Try again with my wallet
-          </button>
-          <button type="button" className="btn btn-ghost btn-small" onClick={onWatchAgain}>
-            Wait for automatic delivery
-          </button>
+          {takeOverOffered(s) ? (
+            <>
+              <button type="button" className="btn btn-outline btn-small" onClick={onTakeOver}>
+                Try again with my wallet
+              </button>
+              <button type="button" className="btn btn-ghost btn-small" onClick={onWatchAgain}>
+                Wait for automatic delivery
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn btn-outline btn-small" onClick={onWatchAgain}>
+              Keep watching
+            </button>
+          )}
         </div>
       )}
 
@@ -191,7 +198,7 @@ function TxDetails({ s }: { s: FlowState }) {
           )}
           {s.sigs.expire && (
             <>
-              <dt>No draw in time</dt>
+              <dt>{s.refund ? "Draw cancelled" : "No draw in time"}</dt>
               <dd>
                 <ExplorerTx sig={s.sigs.expire} />
               </dd>

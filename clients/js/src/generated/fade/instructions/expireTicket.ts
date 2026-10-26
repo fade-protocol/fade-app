@@ -40,7 +40,7 @@ vault?: TAccountVault;
 integrator: TAccountIntegrator;
 ticket: TAccountTicket;
 vrfPayer?: TAccountVrfPayer;
-/** any account when the ticket was never requested. */
+/** request address derived from its recorded seed; checked in the handler. */
 randomness: TAccountRandomness;
 payer: TAccountPayer;
 systemProgram?: TAccountSystemProgram;
@@ -80,7 +80,7 @@ vault: TAccountVault;
 integrator: TAccountIntegrator;
 ticket: TAccountTicket;
 vrfPayer: TAccountVrfPayer;
-/** any account when the ticket was never requested. */
+/** request address derived from its recorded seed; checked in the handler. */
 randomness: TAccountRandomness;
 payer: TAccountPayer;
 systemProgram?: TAccountSystemProgram;
@@ -115,7 +115,7 @@ vault: TAccountMetas[1];
 integrator: TAccountMetas[2];
 ticket: TAccountMetas[3];
 vrfPayer: TAccountMetas[4];
-/** any account when the ticket was never requested. */
+/** request address derived from its recorded seed; checked in the handler. */
 randomness: TAccountMetas[5];
 payer: TAccountMetas[6];
 systemProgram: TAccountMetas[7];

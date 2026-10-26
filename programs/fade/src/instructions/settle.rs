@@ -1,6 +1,9 @@
 //! Closing a ticket: `settle_ticket` once ORAO has fulfilled, at any later time;
-//! `expire_ticket` after `T_SETTLE` if it never did; `claim_payout` for a payout
-//! that could not reach its beneficiary at settlement (Spec 02 §2, Spec 07 §5–§6).
+//! `expire_ticket` after `T_SETTLE` if it never did; `refund_expired_ticket`
+//! for an expired ticket whose request can no longer be looked for;
+//! `claim_payout` for a payout that could not reach its beneficiary at
+//! settlement (Spec 02 §2, Spec 07 §5–§6); `sweep_ticket_vrf` for what reaches
+//! a closed ticket's `vrf_payer`.
 //!
 //! `settle_ticket` must always succeed: a ticket that could not be settled would
 //! block every later strike. Nothing here depends on live parameters.
@@ -14,8 +17,12 @@ use fade_math::{payout_table, select};
 
 use crate::constants::*;
 use crate::errors::{FadeError, OrFade};
-use crate::events::{PayoutClaimed, TicketExpired, TicketSettled};
-use crate::instructions::common::{is_usdc_account, move_lamports, vault_transfer};
+use crate::events::{PayoutClaimed, TicketExpired, TicketSettled, TicketVrfSwept};
+use crate::instructions::common::{
+    is_usdc_account, move_lamports, vault_transfer, withheld_forfeit,
+};
+use crate::instructions::request_randomness::{orao_request_address, ticket_entropy};
+use crate::instructions::request_round_draw::EntropyProof;
 use crate::state::{Config, Integrator, Ticket, TicketStatus, Vault};
 
 /// `SHA256("FADE/OUTCOME/v1" ‖ program ‖ ticket ‖ seed ‖ R ‖ i)`.
@@ -46,38 +53,80 @@ fn release(
     payout: u64,
     now: i64,
 ) -> Result<()> {
+    release_books(
+        vault,
+        integrator,
+        Released {
+            liability: ticket.reserved_liability,
+            vault_credit: ticket.vault_credit,
+            payout,
+            side: ticket.side(),
+            generation: ticket.generation,
+            drawdown_bps: ticket.drawdown_bps,
+        },
+        now,
+    )
+}
+
+/// What a closing ticket, direct or beacon, gives back to the books.
+pub(crate) struct Released {
+    /// The net liability it reserved.
+    pub liability: u64,
+    /// Its vault credit.
+    pub vault_credit: u64,
+    /// What it pays out (0 for an expiry or a forfeiture).
+    pub payout: u64,
+    /// The epoch counter it entered, and in which generation.
+    pub side: Side,
+    pub generation: u32,
+    /// The drawdown threshold snapshotted at its open or its round's creation.
+    pub drawdown_bps: u64,
+}
+
+/// The books of Spec 08 §4 rule 4, shared by `settle_ticket`, `expire_ticket`
+/// and `settle_round_tickets`: the payout leaves the assets, the reservation
+/// and the credit are released, the ticket leaves its epoch counter (its
+/// result booked as an after-close one when the counter calls for it), the
+/// price is observed and a trip recorded; the integrator's reservation and
+/// open tickets are released.
+pub(crate) fn release_books(
+    vault: &mut Vault,
+    integrator: &mut Integrator,
+    r: Released,
+    now: i64,
+) -> Result<()> {
     let price_before = vault.settled_price().or_fade()?;
     vault.total_assets = vault
         .total_assets
-        .checked_sub(payout)
+        .checked_sub(r.payout)
         .ok_or(FadeError::MathOverflow)?;
     vault.total_reserved_liability = vault
         .total_reserved_liability
-        .checked_sub(ticket.reserved_liability)
+        .checked_sub(r.liability)
         .ok_or(FadeError::MathOverflow)?;
     vault.open_vault_credits = vault
         .open_vault_credits
-        .checked_sub(ticket.vault_credit)
+        .checked_sub(r.vault_credit)
         .ok_or(FadeError::MathOverflow)?;
     let mut counters = vault.counters();
-    if ticket.side() == Side::AfterClose && ticket.generation == counters.generation {
+    if r.side == Side::AfterClose && r.generation == counters.generation {
         vault
-            .record_after_close_result(ticket.vault_credit, payout)
+            .record_after_close_result(r.vault_credit, r.payout)
             .or_fade()?;
     }
-    counters.close(ticket.side(), ticket.generation).or_fade()?;
+    counters.close(r.side, r.generation).or_fade()?;
     vault.set_counters(&counters);
     let price_after = vault.settled_price().or_fade()?;
     let mut ring = vault.ring();
     ring.observe(now, price_before, price_after);
-    if ring.tripped(price_after, ticket.drawdown_bps) {
+    if ring.tripped(price_after, r.drawdown_bps) {
         vault.drawdown_trip_ts = now;
     }
     vault.set_ring(&ring);
 
     integrator.reserved_liability = integrator
         .reserved_liability
-        .checked_sub(ticket.reserved_liability)
+        .checked_sub(r.liability)
         .ok_or(FadeError::MathOverflow)?;
     integrator.open_tickets = integrator
         .open_tickets
@@ -86,11 +135,17 @@ fn release(
     Ok(())
 }
 
-/// Everything the ORAO prefund still holds goes back to the ticket's payer.
+/// Everything the ORAO prefund still holds moves onto the ticket, whose close
+/// carries it to the payer with the rent (`claim_payout`'s close for a parked
+/// ticket). The payer is an address stored at open, never handed to a CPI:
+/// the runtime does not copy a CPI's lamport change on an executable account
+/// back into the caller's view, so a payer turned into a program after the
+/// open would fail every exit of its ticket on an unbalanced instruction, and
+/// the ticket would hold its epoch's strike for good. A direct credit, the
+/// close's, reaches any writable account, executable or not.
 fn drain_vrf_payer<'info>(
     vrf_payer: &SystemAccount<'info>,
-    payer: AccountInfo<'info>,
-    ticket: &Pubkey,
+    ticket: AccountInfo<'info>,
     bump: u8,
     system: &Program<'info, System>,
 ) -> Result<()> {
@@ -98,13 +153,14 @@ fn drain_vrf_payer<'info>(
     if lamports == 0 {
         return Ok(());
     }
-    let seeds: &[&[u8]] = &[VRF_PAYER_SEED, ticket.as_ref(), &[bump]];
+    let ticket_key = ticket.key();
+    let seeds: &[&[u8]] = &[VRF_PAYER_SEED, ticket_key.as_ref(), &[bump]];
     system_program::transfer(
         CpiContext::new_with_signer(
             system.key(),
             system_program::Transfer {
                 from: vrf_payer.to_account_info(),
-                to: payer,
+                to: ticket,
             },
             &[seeds],
         ),
@@ -224,15 +280,14 @@ pub fn settle_ticket(ctx: Context<SettleTicket>) -> Result<()> {
         payout,
     )?;
 
-    // Prefund back to the payer, then the crank fee to the settler. The CPI
+    // The prefund onto the ticket, then the crank fee to the settler. The CPI
     // comes first: lamports moved directly before a CPI are only reconciled
-    // for the accounts that CPI receives, so a settler who is also the payer
-    // would otherwise fail the runtime's balance check.
+    // for the accounts that CPI receives, and the ticket is one. The payer is
+    // credited directly, by the close, never through a CPI.
     let vrf_bump = ctx.accounts.ticket.vrf_payer_bump;
     drain_vrf_payer(
         &ctx.accounts.vrf_payer,
-        ctx.accounts.payer.to_account_info(),
-        &ticket_key,
+        ctx.accounts.ticket.to_account_info(),
         vrf_bump,
         &ctx.accounts.system_program,
     )?;
@@ -249,6 +304,8 @@ pub fn settle_ticket(ctx: Context<SettleTicket>) -> Result<()> {
     ticket.crank_settle_lamports = 0;
     ticket.outcome = outcome;
     if pending {
+        // Parked: the ticket keeps the prefund with its rent until
+        // `claim_payout` closes it to the payer.
         ticket.status = TicketStatus::PayoutPending;
         ticket.payout = payout;
     } else {
@@ -280,8 +337,8 @@ pub struct ExpireTicket<'info> {
     pub ticket: Box<Account<'info, Ticket>>,
     #[account(mut, seeds = [VRF_PAYER_SEED, ticket.key().as_ref()], bump = ticket.vrf_payer_bump)]
     pub vrf_payer: SystemAccount<'info>,
-    /// CHECK: the bound request when there is one, checked to be unfulfilled;
-    /// any account when the ticket was never requested.
+    /// CHECK: the bound request, or, for a ticket never requested, the
+    /// request address derived from its recorded seed; checked in the handler.
     pub randomness: UncheckedAccount<'info>,
     /// CHECK: the payer recorded at open.
     #[account(mut, address = ticket.payer)]
@@ -290,6 +347,19 @@ pub struct ExpireTicket<'info> {
 }
 
 /// Forfeiture, never a refund: the credit stays with the vault (Spec 02 §2.2).
+///
+/// A fulfilled request must be settled, not expired (`AlreadyFulfilled`),
+/// bound or not. A ticket never requested is expired only once its seed is
+/// recorded (`record_ticket_entropy`, `EntropyUnrecorded` otherwise), with
+/// `randomness` the request address derived from it: its seed is public from
+/// the slot after the open, so anyone may have created its request through
+/// ORAO and read the outcome, and a forfeiture would then be a draw withheld
+/// by whoever chose not to bind it. A fulfilled request there is bound late
+/// by `request_randomness` and settled; a pending one, or one fulfilled with
+/// zero, is reported (`request_found`). A ticket whose seed was never
+/// recorded and whose `s*` SlotHashes no longer proves is refunded instead,
+/// by `refund_expired_ticket`. Every expiry a withheld draw may explain counts
+/// in `Vault.ticket_forfeits_withheld`.
 pub fn expire_ticket(ctx: Context<ExpireTicket>) -> Result<()> {
     require!(
         ctx.remaining_accounts.is_empty(),
@@ -305,10 +375,14 @@ pub fn expire_ticket(ctx: Context<ExpireTicket>) -> Result<()> {
         Clock::get()?.slot > ticket.expiry_slot,
         FadeError::NotExpired
     );
-    if ticket.status == TicketStatus::Requested {
+    let randomness = &ctx.accounts.randomness;
+    // `request_found`: an ORAO request exists at the ticket's seed; `checked`:
+    // the program looked for one; `pending`: the bound request is still
+    // pending and `vrf_payer` paid its rent, so ORAO's refund of that rent
+    // will reach `vrf_payer` (a request someone else created refunds them).
+    let (requested, request_found, pending) = if ticket.status == TicketStatus::Requested {
         // A fulfilled request must be settled, not expired: the race between a
         // settler and an expirer is decided by whichever lands first.
-        let randomness = &ctx.accounts.randomness;
         require_keys_eq!(
             randomness.key(),
             ticket.randomness,
@@ -320,13 +394,39 @@ pub fn expire_ticket(ctx: Context<ExpireTicket>) -> Result<()> {
             FadeError::WrongRandomnessAccount
         );
         let data = randomness.try_borrow_data()?;
-        match orao_layout::randomness(&data) {
-            Some(Randomness::Pending) => {}
-            Some(Randomness::Fulfilled { randomness, .. }) if randomness == [0u8; 64] => {}
+        let pending = match orao_layout::randomness(&data) {
+            Some(Randomness::Pending) => {
+                orao_layout::pending_v2_client(&data)
+                    == Some(ctx.accounts.vrf_payer.key().to_bytes())
+            }
+            Some(Randomness::Fulfilled { randomness, .. }) if randomness == [0u8; 64] => false,
             Some(Randomness::Fulfilled { .. }) => return err!(FadeError::AlreadyFulfilled),
             None => return err!(FadeError::WrongRandomnessAccount),
-        }
-    }
+        };
+        (true, true, pending)
+    } else {
+        require!(ticket.entropy_recorded(), FadeError::EntropyUnrecorded);
+        require_keys_eq!(
+            randomness.key(),
+            orao_request_address(&ticket.seed),
+            FadeError::WrongRandomnessAccount
+        );
+        let found = if *randomness.owner == ORAO_VRF_ID {
+            let data = randomness.try_borrow_data()?;
+            match orao_layout::randomness(&data) {
+                Some(Randomness::Pending) => {}
+                Some(Randomness::Fulfilled { randomness, .. }) if randomness == [0u8; 64] => {}
+                Some(Randomness::Fulfilled { .. }) => return err!(FadeError::AlreadyFulfilled),
+                None => return err!(FadeError::WrongRandomnessAccount),
+            }
+            true
+        } else {
+            // No request: lamports sent to the address leave it system-owned.
+            false
+        };
+        (false, found, false)
+    };
+    let checked = true;
 
     let now = Clock::get()?.unix_timestamp;
     release(
@@ -336,13 +436,20 @@ pub fn expire_ticket(ctx: Context<ExpireTicket>) -> Result<()> {
         0,
         now,
     )?;
+    let vault = &mut ctx.accounts.vault;
+    if withheld_forfeit(requested, request_found, checked) {
+        vault.ticket_forfeits_withheld = vault
+            .ticket_forfeits_withheld
+            .checked_add(1)
+            .ok_or(FadeError::MathOverflow)?;
+    }
+    let ticket_forfeits_withheld = vault.ticket_forfeits_withheld;
 
     // The CPI before the direct move, as in settle_ticket.
     let vrf_bump = ctx.accounts.ticket.vrf_payer_bump;
     drain_vrf_payer(
         &ctx.accounts.vrf_payer,
-        ctx.accounts.payer.to_account_info(),
-        &ticket_key,
+        ctx.accounts.ticket.to_account_info(),
         vrf_bump,
         &ctx.accounts.system_program,
     )?;
@@ -359,10 +466,294 @@ pub fn expire_ticket(ctx: Context<ExpireTicket>) -> Result<()> {
         .ticket
         .close(ctx.accounts.payer.to_account_info())?;
     emit_cpi!(TicketExpired {
-        version: EVENT_VERSION,
+        version: TICKET_EXPIRED_VERSION,
         ticket: ticket_key,
         integrator: integrator_key,
         forfeited,
+        requested,
+        request_found,
+        checked,
+        pending,
+        refunded: false,
+        refund: 0,
+        parked: false,
+        ticket_forfeits_withheld,
+    });
+    Ok(())
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+pub struct RefundExpiredTicket<'info> {
+    /// Anyone; receives the settler's share of the crank fee.
+    #[account(mut)]
+    pub caller: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+    #[account(mut, seeds = [VAULT_SEED], bump = vault.bump)]
+    pub vault: Box<Account<'info, Vault>>,
+    #[account(mut, address = ticket.integrator)]
+    pub integrator: Box<Account<'info, Integrator>>,
+    #[account(mut, seeds = [TICKET_SEED, ticket.integrator.as_ref(), &ticket.nonce.to_le_bytes()], bump = ticket.bump)]
+    pub ticket: Box<Account<'info, Ticket>>,
+    #[account(mut, seeds = [VRF_PAYER_SEED, ticket.key().as_ref()], bump = ticket.vrf_payer_bump)]
+    pub vrf_payer: SystemAccount<'info>,
+    /// CHECK: pinned to the sysvar; parsed with a bounded reader.
+    #[account(address = SLOT_HASHES_ID)]
+    pub slot_hashes: UncheckedAccount<'info>,
+    /// CHECK: the beneficiary stored at open; inspected before any transfer.
+    #[account(mut, address = ticket.beneficiary @ FadeError::BeneficiaryMismatch)]
+    pub beneficiary: UncheckedAccount<'info>,
+    #[account(mut, seeds = [PAYOUT_ESCROW_SEED], bump)]
+    pub payout_escrow: Box<Account<'info, TokenAccount>>,
+    #[account(mut, seeds = [USDC_VAULT_SEED], bump)]
+    pub vault_usdc: Box<Account<'info, TokenAccount>>,
+    /// CHECK: data-less PDA that owns the vault's token accounts.
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+    /// CHECK: the payer recorded at open: receives the rent and every refund.
+    #[account(mut, address = ticket.payer)]
+    pub payer: UncheckedAccount<'info>,
+    #[account(address = config.usdc_mint @ FadeError::WrongMint)]
+    pub usdc_mint: Box<Account<'info, Mint>>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+/// The books of a refunded ticket: its credit leaves the assets with the open
+/// credits, its reservation is released, it leaves its epoch counter, and the
+/// integrator's reservation and open tickets are released. A refund is no
+/// result: the settled assets do not move, so no after-close result is booked
+/// and the drawdown ring is not observed.
+fn release_refund(vault: &mut Vault, integrator: &mut Integrator, ticket: &Ticket) -> Result<()> {
+    vault.total_assets = vault
+        .total_assets
+        .checked_sub(ticket.vault_credit)
+        .ok_or(FadeError::MathOverflow)?;
+    vault.open_vault_credits = vault
+        .open_vault_credits
+        .checked_sub(ticket.vault_credit)
+        .ok_or(FadeError::MathOverflow)?;
+    vault.total_reserved_liability = vault
+        .total_reserved_liability
+        .checked_sub(ticket.reserved_liability)
+        .ok_or(FadeError::MathOverflow)?;
+    let mut counters = vault.counters();
+    counters.close(ticket.side(), ticket.generation).or_fade()?;
+    vault.set_counters(&counters);
+    integrator.reserved_liability = integrator
+        .reserved_liability
+        .checked_sub(ticket.reserved_liability)
+        .ok_or(FadeError::MathOverflow)?;
+    integrator.open_tickets = integrator
+        .open_tickets
+        .checked_sub(1)
+        .ok_or(FadeError::MathOverflow)?;
+    Ok(())
+}
+
+/// Anyone, never paused, paid the settler's share: the end of an expired
+/// ticket never requested whose request can no longer be looked for, its
+/// seed never recorded and SlotHashes no longer proving `s*`
+/// (`EntropyStillProven` while it does: record it and expire the ticket).
+/// The vault credit goes back to the beneficiary, or waits in
+/// `payout_escrow` for `claim_payout` when the beneficiary cannot receive it
+/// (`PayoutPending`, `payout` the credit); the protocol and app shares paid
+/// at open are not returned.
+///
+/// Why a refund. Anyone may have created the ticket's request through ORAO
+/// once its seed was public and read its outcome; with the seed never
+/// recorded and `s*` gone from SlotHashes, the program cannot tell whether
+/// that request exists, so any end that depends on it is the choice of
+/// whoever holds it. A forfeiture would let them void every ticket that
+/// wins; settling is impossible without the request. The refund is the end
+/// that does not depend on the draw, as `expire_round` refunds a round
+/// (Spec 08 invariant 10). It still leaves whoever held a fulfilled request
+/// a choice between settling and this refund. The program cannot record the
+/// seed at the open (`s*` does not exist yet) and does not require anyone to
+/// record it; the keeper sends `record_ticket_entropy` on its own transaction
+/// from `open_slot + 2`, ahead of its request, so that the choice exists
+/// only for a ticket opened while nobody records seeds for about the
+/// SlotHashes retention (512 slots). That residual is accepted, as it is for
+/// `expire_round`, and bounded by the alarm: this path counts as a withheld
+/// draw (`Vault.ticket_forfeits_withheld`), whose unacknowledged count
+/// recommends the guardian's pause.
+pub fn refund_expired_ticket(ctx: Context<RefundExpiredTicket>) -> Result<()> {
+    require!(
+        ctx.remaining_accounts.is_empty(),
+        FadeError::RemainingAccounts
+    );
+    let ticket_key = ctx.accounts.ticket.key();
+    let ticket = &ctx.accounts.ticket;
+    require!(
+        ticket.status == TicketStatus::Open,
+        FadeError::WrongTicketStatus
+    );
+    require!(
+        Clock::get()?.slot > ticket.expiry_slot,
+        FadeError::NotExpired
+    );
+    match ticket_entropy(
+        ctx.program_id,
+        &ticket_key,
+        ticket,
+        &ctx.accounts.slot_hashes,
+    )? {
+        EntropyProof::Lost => {}
+        EntropyProof::Known(_) => return err!(FadeError::EntropyStillProven),
+        EntropyProof::NotYet => return err!(FadeError::EntropyUnavailable),
+    }
+
+    release_refund(
+        &mut ctx.accounts.vault,
+        &mut ctx.accounts.integrator,
+        &ctx.accounts.ticket,
+    )?;
+    let vault = &mut ctx.accounts.vault;
+    vault.ticket_forfeits_withheld = vault
+        .ticket_forfeits_withheld
+        .checked_add(1)
+        .ok_or(FadeError::MathOverflow)?;
+    let ticket_forfeits_withheld = vault.ticket_forfeits_withheld;
+
+    let refund = ctx.accounts.ticket.vault_credit;
+    let mint_key = ctx.accounts.usdc_mint.key();
+    // Read before any CPI: a failed transfer would abort the refund.
+    let parked = refund > 0 && !is_usdc_account(&ctx.accounts.beneficiary, &mint_key);
+    let destination = if parked {
+        ctx.accounts.payout_escrow.to_account_info()
+    } else {
+        ctx.accounts.beneficiary.to_account_info()
+    };
+    vault_transfer(
+        &ctx.accounts.token_program,
+        &ctx.accounts.vault_usdc,
+        destination,
+        &ctx.accounts.usdc_mint,
+        ctx.accounts.vault_authority.to_account_info(),
+        ctx.accounts.config.vault_authority_bump,
+        refund,
+    )?;
+
+    // The CPI before the direct move, as in settle_ticket.
+    let vrf_bump = ctx.accounts.ticket.vrf_payer_bump;
+    drain_vrf_payer(
+        &ctx.accounts.vrf_payer,
+        ctx.accounts.ticket.to_account_info(),
+        vrf_bump,
+        &ctx.accounts.system_program,
+    )?;
+    let share = ctx.accounts.ticket.crank_settle_lamports;
+    move_lamports(
+        &ctx.accounts.ticket.to_account_info(),
+        &ctx.accounts.caller.to_account_info(),
+        share,
+    )?;
+
+    let integrator_key = ctx.accounts.integrator.key();
+    let ticket = &mut ctx.accounts.ticket;
+    ticket.crank_settle_lamports = 0;
+    if parked {
+        // The requester's share, never paid, and the prefund go back with the
+        // rent at the claim.
+        // `REFUND_OUTCOME` tells this parked refund from a parked settlement.
+        ticket.status = TicketStatus::PayoutPending;
+        ticket.outcome = REFUND_OUTCOME;
+        ticket.payout = refund;
+    } else {
+        ctx.accounts
+            .ticket
+            .close(ctx.accounts.payer.to_account_info())?;
+    }
+    emit_cpi!(TicketExpired {
+        version: TICKET_EXPIRED_VERSION,
+        ticket: ticket_key,
+        integrator: integrator_key,
+        forfeited: 0,
+        requested: false,
+        request_found: false,
+        checked: false,
+        pending: false,
+        refunded: true,
+        refund,
+        parked,
+        ticket_forfeits_withheld,
+    });
+    Ok(())
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+#[instruction(nonce: u64)]
+pub struct SweepTicketVrf<'info> {
+    /// Anyone; receives what a closed ticket's `vrf_payer` holds.
+    #[account(mut)]
+    pub caller: Signer<'info>,
+    /// Read for `next_nonce`: only a ticket the integrator opened is swept.
+    #[account(seeds = [INTEGRATOR_SEED, integrator.authority.as_ref()], bump = integrator.bump)]
+    pub integrator: Box<Account<'info, Integrator>>,
+    /// CHECK: ticket `nonce`'s address, `["ticket", integrator, nonce]`. Only
+    /// its owner is read: a ticket's address is never used again, so any
+    /// owner but this program means the ticket has closed.
+    #[account(seeds = [TICKET_SEED, integrator.key().as_ref(), &nonce.to_le_bytes()], bump)]
+    pub ticket: UncheckedAccount<'info>,
+    /// `["vrf-payer", ticket]`, signed by the program.
+    #[account(mut, seeds = [VRF_PAYER_SEED, ticket.key().as_ref()], bump)]
+    pub vrf_payer: SystemAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Anyone, never paused, unpaid: every lamport on a closed direct ticket's
+/// `vrf_payer` leaves it, to the caller. ORAO refunds a request's pending
+/// rent to `vrf_payer` when it fulfils it, which for a ticket expired with
+/// its request still pending comes after `expire_ticket` drained it, and
+/// anyone may send lamports to it at any time; while the ticket exists its
+/// own exit drains `vrf_payer` onto it, for its payer, so the sweep refuses it
+/// (`WrongTicketStatus`). Once the ticket has closed, nothing on-chain names
+/// its payer any more, so the sweep pays whoever sends it. Nothing reads
+/// `vrf_payer` after the close: no outcome, settlement or book depends on
+/// what this moves. Nothing to sweep succeeds without moving or emitting
+/// anything, so that the sweep can be sent early, or raced.
+pub fn sweep_ticket_vrf(ctx: Context<SweepTicketVrf>, nonce: u64) -> Result<()> {
+    require!(
+        ctx.remaining_accounts.is_empty(),
+        FadeError::RemainingAccounts
+    );
+    // A ticket the integrator opened: a later nonce names no ticket yet, and
+    // lamports sent to its `vrf_payer` are its open's to take over.
+    require!(
+        nonce < ctx.accounts.integrator.next_nonce,
+        FadeError::WrongNonce
+    );
+    require!(
+        *ctx.accounts.ticket.owner != crate::ID,
+        FadeError::WrongTicketStatus
+    );
+    let lamports = ctx.accounts.vrf_payer.lamports();
+    if lamports == 0 {
+        return Ok(());
+    }
+    let ticket_key = ctx.accounts.ticket.key();
+    let seeds: &[&[u8]] = &[VRF_PAYER_SEED, ticket_key.as_ref(), &[ctx.bumps.vrf_payer]];
+    let to = ctx.accounts.caller.key();
+    system_program::transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.system_program.key(),
+            system_program::Transfer {
+                from: ctx.accounts.vrf_payer.to_account_info(),
+                to: ctx.accounts.caller.to_account_info(),
+            },
+            &[seeds],
+        ),
+        lamports,
+    )?;
+    emit_cpi!(TicketVrfSwept {
+        version: EVENT_VERSION,
+        ticket: ticket_key,
+        integrator: ctx.accounts.integrator.key(),
+        nonce,
+        to,
+        lamports,
     });
     Ok(())
 }

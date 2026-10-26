@@ -32,8 +32,18 @@ side: number; generation: number;
 /** Lamports of crank fee still held for the requester and the settler. */
 crankRequestLamports: bigint; crankSettleLamports: bigint; 
 /** The ORAO request account, bound by `request_randomness`. */
-randomness: Address; entropySlot: bigint; entropyHash: ReadonlyUint8Array; seed: ReadonlyUint8Array; outcome: number; 
-/** Set when the payout waits in `payout_escrow`. */
+randomness: Address; 
+/**
+ * `s*`, `h*` and the ORAO seed, recorded by `record_ticket_entropy` or
+ * `request_randomness`; all zero until then.
+ */
+entropySlot: bigint; entropyHash: ReadonlyUint8Array; seed: ReadonlyUint8Array; 
+/**
+ * The outcome drawn, or `REFUND_OUTCOME` for a refund parked in
+ * `payout_escrow`; 0 until either.
+ */
+outcome: number; 
+/** Set when the payout (or the refunded credit) waits in `payout_escrow`. */
 payout: bigint; payoutTableLen: number; payoutTable: Array<Outcome>;  };
 
 export type TicketArgs = { version: number; bump: number; vrfPayerBump: number; status: TicketStatusArgs; integrator: Address; nonce: number | bigint; 
@@ -55,8 +65,18 @@ side: number; generation: number;
 /** Lamports of crank fee still held for the requester and the settler. */
 crankRequestLamports: number | bigint; crankSettleLamports: number | bigint; 
 /** The ORAO request account, bound by `request_randomness`. */
-randomness: Address; entropySlot: number | bigint; entropyHash: ReadonlyUint8Array; seed: ReadonlyUint8Array; outcome: number; 
-/** Set when the payout waits in `payout_escrow`. */
+randomness: Address; 
+/**
+ * `s*`, `h*` and the ORAO seed, recorded by `record_ticket_entropy` or
+ * `request_randomness`; all zero until then.
+ */
+entropySlot: number | bigint; entropyHash: ReadonlyUint8Array; seed: ReadonlyUint8Array; 
+/**
+ * The outcome drawn, or `REFUND_OUTCOME` for a refund parked in
+ * `payout_escrow`; 0 until either.
+ */
+outcome: number; 
+/** Set when the payout (or the refunded credit) waits in `payout_escrow`. */
 payout: number | bigint; payoutTableLen: number; payoutTable: Array<OutcomeArgs>;  };
 
 /** Gets the encoder for {@link TicketArgs} account data. */
