@@ -6,7 +6,16 @@ import type { ProtocolState } from "./fade";
 import type { LpItem, PricePoint } from "./history";
 import { BPS, M_CEILING_BPS, payout, perTicketCap, withdrawable, type Vault } from "./math";
 import { DEMO_APP_SHARE_BPS, DEMO_MARGIN_BPS } from "./payoutTables";
+import { APR_LABEL, APR_WINDOW_S, aprSeries, coveredFrom } from "./apr";
 import { volumeSeries, type TicketLog } from "./ticketLog";
+import {
+  ACTIVITY_WINDOW_S,
+  APPS_WINDOW_S,
+  activityTickets,
+  netDeposits,
+  RANGE_S,
+  rebucket,
+} from "./vaultViews";
 
 type Live = Extract<ProtocolState, { initialized: true }>;
 
@@ -140,9 +149,12 @@ const DAY = 86400;
 export type ActivityFigures = {
   /** Tickets opened over the span. */
   n: number;
-  /** Payouts of the tickets settled over the span. */
+  /** Payouts of the draws of the tickets settled over the span; a credit back is none. */
   paid: bigint;
-  /** What the vault kept on those tickets: their vault credits less their payouts. */
+  /**
+   * What the vault kept on those tickets: their vault credits less their payouts, nothing for a
+   * refunded beacon ticket (lib/vaultViews `activityTickets`).
+   */
   result: bigint;
   /** Deposits less withdrawals paid by the closes of the last 24 h. */
   net: bigint;
@@ -151,35 +163,58 @@ export type ActivityFigures = {
 };
 
 /**
- * The last 24 h of the vault: tickets opened, paid to winners, the vault's result on the tickets
- * that ended, and the net deposits of the closes. A capped ticket read covers less than a day:
- * the figures then say over how long.
+ * The last 24 h of the vault from the app's own reads: tickets opened, paid to winners, the
+ * vault's result on the tickets that ended, and the net deposits of the closes (lib/vaultViews,
+ * the keeper's arithmetic too). A capped ticket read covers less than a day: the figures then
+ * say over how long.
  */
 export function activityFigures(
   tickets: TicketLog,
   items: readonly LpItem[],
   now: number,
 ): ActivityFigures {
-  const since = Math.max(now - DAY, tickets.truncated && tickets.from ? tickets.from : 0);
-  let n = 0;
-  let paid = 0n;
-  let result = 0n;
-  for (const r of tickets.rows) {
-    if ((r.openedAt ?? 0) >= since) n += 1;
-    const at = r.end?.at ?? null;
-    if (r.end && at !== null && at >= since) {
-      paid += r.end.payout;
-      result += r.vaultCredit - r.end.payout;
-    }
-  }
-  let net = 0n;
-  for (const item of items)
-    if ((item.blockTime ?? 0) >= now - DAY)
-      for (const e of item.events)
-        if (e.kind === "EpochStruck") net += e.data.deposits - e.data.assetsPaid;
-  const hours = Math.max(1, Math.round((now - since) / 3600));
-  return { n, paid, result, net, span: hours >= 24 ? "24 h" : `${hours} h` };
+  const since = Math.max(
+    now - ACTIVITY_WINDOW_S,
+    tickets.truncated && tickets.from ? tickets.from : 0,
+  );
+  const strikes = items.flatMap((item) =>
+    item.events.flatMap((e) =>
+      e.kind === "EpochStruck" ? [{ t: item.blockTime, ...e.data }] : [],
+    ),
+  );
+  return {
+    ...activityTickets(tickets.rows, since),
+    net: netDeposits(strikes, now - ACTIVITY_WINDOW_S),
+    span: spanWords(now - since),
+  };
 }
+
+/**
+ * The window a figure covers, at most the 7 days of the per-app table: "7D", or how far back a
+ * read capped inside them reaches, "2D", "14 h".
+ */
+export function windowLabel(seconds: number): string {
+  const days = Math.floor(seconds / DAY);
+  if (days >= 1) return `${Math.min(days, APPS_WINDOW_S / DAY)}D`;
+  return `${Math.max(1, Math.round(seconds / 3600))} h`;
+}
+
+/** The same in words: "7 days", "2 days", "14 hours", "1 hour". */
+export function windowWords(seconds: number): string {
+  const days = Math.floor(seconds / DAY);
+  if (days >= 1) {
+    const d = Math.min(days, APPS_WINDOW_S / DAY);
+    return `${d} ${d === 1 ? "day" : "days"}`;
+  }
+  const h = Math.max(1, Math.round(seconds / 3600));
+  return `${h} ${h === 1 ? "hour" : "hours"}`;
+}
+
+/** "24 h", or the hours a shorter span covers, at least one. */
+export const spanWords = (seconds: number) => {
+  const hours = Math.max(1, Math.round(seconds / 3600));
+  return hours >= 24 ? "24 h" : `${hours} h`;
+};
 
 // --- the Performance tab: the share price close by close -------------------------------------
 
@@ -243,14 +278,17 @@ export function moveStats(moves: readonly Pick<CloseMove, "pct">[]) {
 
 // --- the Overview chart --------------------------------------------------------------------
 
-export type ChartSeries = "price" | "deposits" | "volume";
+export type ChartSeries = "apr" | "price" | "deposits" | "volume";
 export type ChartRange = "1D" | "7D" | "1M" | "ALL";
+
+/** The Overview chart's series pills, in order: the first is the one shown on arrival. */
+export const CHART_SERIES: readonly { id: ChartSeries; label: string }[] = [
+  { id: "apr", label: APR_LABEL },
+  { id: "price", label: "Share price" },
+  { id: "deposits", label: "Deposits" },
+  { id: "volume", label: "Ticket volume" },
+];
 const HOUR = 3600;
-const RANGE_S: Record<Exclude<ChartRange, "ALL">, number> = {
-  "1D": DAY,
-  "7D": 7 * DAY,
-  "1M": 30 * DAY,
-};
 
 /**
  * Where the chart starts: the range back from now, but never before the first data (a young
@@ -266,19 +304,110 @@ export const bucketFor = (span: number) =>
   [900, HOUR, 6 * HOUR].find((b) => span / b <= 48) ?? 86400;
 
 export type ChartView = {
-  points: { t: number; v: number }[];
+  /** A null value is a gap: fewer than `APR_MIN_TICKETS` tickets in that whole week. */
+  points: { t: number; v: number | null }[];
   from: number;
   to: number;
-  /** The figure above the chart: the last point (price, deposits) or the total over the window (volume). */
-  headline: number;
+  /**
+   * The figure above the chart: the last point (price, deposits, APR, null in a gap) or the total
+   * over the window (volume).
+   */
+  headline: number | null;
   unit: string;
-  /** Percent from the window's start to its end; null for the volume or without a start. */
+  /**
+   * From the window's start to its end: in percent (price, deposits), in percentage points from
+   * the first point (APR); null for the volume or without a start.
+   */
   change: number | null;
 };
 
+/** What the APR series reads beyond the histories: the live figures the headline uses. */
+export type AprInputs = { totalAssets: bigint; protocolShareBps: bigint };
+
+/** The unit under the APR's figure. */
+const APR_UNIT = "last 7 days, annualised";
+
 /**
- * The Overview chart: the share price or the vault's assets after each close then today's, or the
- * ticket volume per bucket over the window. Points in USDC.
+ * The Overview chart's APR from the keeper's hourly series (lib/vaultApr, oldest first, its last
+ * point now): the range back from its last point, never before its first, one point per
+ * `bucketFor` period (an hour at least) on the whole periods, then now. Null without a series.
+ */
+export function aprChartView(
+  range: ChartRange,
+  series: readonly { t: number; v: number | null }[],
+): ChartView | null {
+  const end = series.at(-1);
+  if (!end) return null;
+  const now = end.t;
+  const from = windowStart(range, series[0]!.t, now);
+  const bucket = Math.max(HOUR, bucketFor(now - from));
+  const points = series.filter(
+    (p, i) => i === series.length - 1 || (p.t >= from && p.t % bucket === 0),
+  );
+  const shown = points.filter((p) => p.v !== null);
+  const first = shown[0]?.v ?? null;
+  return {
+    points,
+    from,
+    to: now,
+    headline: end.v,
+    unit: APR_UNIT,
+    change: end.v !== null && first !== null && shown.length > 1 ? end.v - first : null,
+  };
+}
+
+/**
+ * The Overview chart's ticket volume from the keeper's hourly sums (lib/keeperViews): the range
+ * back from now, never before the first hour served, one point per `bucketFor` period (an hour
+ * at least) starting on a whole period, the first from the hour the range starts in, the last one
+ * to now (lib/vaultViews `rebucket`).
+ */
+export function volumeChartView(
+  range: ChartRange,
+  volume: { from: number; sums: readonly bigint[] },
+  now: number,
+): ChartView {
+  const start = windowStart(range, volume.from, now);
+  const bucket = Math.max(HOUR, bucketFor(now - start));
+  const points = rebucket(volume.from, volume.sums, bucket, start).map((p) => ({
+    t: p.t,
+    v: Number(p.v) / 1e6,
+  }));
+  const total = points.reduce((s, p) => s + p.v, 0);
+  return {
+    points,
+    from: points[0]!.t,
+    to: now,
+    headline: total,
+    unit: "USDC of tickets",
+    change: null,
+  };
+}
+
+/**
+ * The app's own APR chart ending on the headline `pct` where its last point is blank: the
+ * headline scales a read capped inside the 7 days, which the chart does not. Unchanged otherwise.
+ */
+export function withAprHeadline(view: ChartView, pct: number | null): ChartView {
+  if (view.headline !== null || pct === null) return view;
+  const points = [...view.points.slice(0, -1), { t: view.to, v: pct }];
+  const shown = points.filter((p) => p.v !== null);
+  const first = shown[0]?.v ?? null;
+  return {
+    ...view,
+    points,
+    headline: pct,
+    change: first !== null && shown.length > 1 ? pct - first : null,
+  };
+}
+
+/**
+ * The Overview chart: the share price or the vault's assets after each close then today's, the
+ * ticket volume per bucket over the window, or the APR at each bucket's start then now
+ * (`aprSeries`, over the assets after the last close before each point and today's total assets
+ * at the last, as the headline reads them): the app's own APR, from the tickets it read, for
+ * when the keeper's (`aprChartView`) cannot be had. The APR starts at the first point whose 7
+ * days the log lists in full. Points in USDC, the APR in percent.
  */
 export function chartView(
   series: ChartSeries,
@@ -286,7 +415,35 @@ export function chartView(
   strikes: readonly PricePoint[] | null,
   tickets: TicketLog | null,
   now: number,
+  apr?: AprInputs,
 ): ChartView | null {
+  if (series === "apr") {
+    if (!tickets || !apr) return null;
+    // from the first point whose 7 days the log lists in full, or the oldest ticket after it
+    const oldest = tickets.rows.at(-1)?.openedAt ?? now;
+    const from = windowStart(range, Math.max(coveredFrom(tickets) + APR_WINDOW_S, oldest), now);
+    const bucket = bucketFor(now - from);
+    const times: number[] = [];
+    for (let t = from; t < now; t += bucket) times.push(t);
+    times.push(now);
+    const assets = (strikes ?? [])
+      .filter((p) => p.epochId !== null)
+      .map((p) => ({ t: p.t, assets: p.assets }))
+      .sort((a, b) => a.t - b.t);
+    assets.push({ t: now, assets: apr.totalAssets });
+    const points = aprSeries(tickets, assets, apr.protocolShareBps, times);
+    const shown = points.filter((p) => p.v !== null);
+    const last = points.at(-1)!.v;
+    const first = shown[0]?.v ?? null;
+    return {
+      points,
+      from,
+      to: now,
+      headline: last,
+      unit: APR_UNIT,
+      change: last !== null && first !== null && shown.length > 1 ? last - first : null,
+    };
+  }
   if (series === "volume") {
     if (!tickets) return null;
     const oldest = tickets.rows.at(-1)?.openedAt ?? tickets.from ?? now - DAY;

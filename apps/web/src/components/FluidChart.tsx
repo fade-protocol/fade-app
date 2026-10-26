@@ -5,12 +5,13 @@
 // price near 1 morphs into deposits in the tens of thousands as smoothly as a range change. The
 // axis bounds ease over the same frames, and the axis labels roll with them. The frames run on
 // requestAnimationFrame and write the path attributes directly, without a React render per
-// frame. The crosshair eases toward the pointer and reads the value under it. With reduced
-// motion, every change is immediate.
+// frame. The crosshair eases toward the pointer and reads the value under it. A null value is
+// a gap: the line and its area break there. With reduced motion, every change is immediate.
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { usePrefersReducedMotion } from "./motion";
 
-export type FluidPoint = { t: number; v: number };
+/** A null value is a gap: nothing is drawn there. */
+export type FluidPoint = { t: number; v: number | null };
 
 /** Samples per series: dense enough to look like a curve at any width, cheap to tween. */
 const N = 180;
@@ -27,12 +28,13 @@ const easeOut = (x: number) => 1 - (1 - x) ** 3;
 
 /**
  * The value at `t`, linear between points (or held from the last point, `step`), held flat
- * beyond the ends.
+ * beyond the ends. Null in a gap; next to one, a point holds over the half of the interval on
+ * its side, so a point between two gaps still shows.
  */
-function valueAt(points: readonly FluidPoint[], t: number, step = false): number {
+function valueAt(points: readonly FluidPoint[], t: number, step = false): number | null {
   const first = points[0];
   const last = points[points.length - 1];
-  if (!first || !last) return 0;
+  if (!first || !last) return null;
   if (t <= first.t) return first.v;
   if (t >= last.t) return last.v;
   let lo = 0;
@@ -45,14 +47,21 @@ function valueAt(points: readonly FluidPoint[], t: number, step = false): number
   const a = points[lo]!;
   const b = points[hi]!;
   if (step) return a.v;
+  if (a.v === null || b.v === null) return 2 * (t - a.t) < b.t - a.t ? a.v : b.v;
   return b.t === a.t ? b.v : a.v + ((b.v - a.v) * (t - a.t)) / (b.t - a.t);
 }
 
 /**
- * One sampled series: each point's height in the plot (`hs`, 0 at `lo`, 1 at `hi`), the axis
- * bounds, and how its axis labels are written.
+ * One sampled series: each point's height in the plot (`hs`, 0 at `lo`, 1 at `hi`), which
+ * samples hold a value (`on`, 0 in a gap), the axis bounds, and how its axis labels are written.
  */
-type Frame = { hs: Float64Array; lo: number; hi: number; fmt: (v: number) => string };
+type Frame = {
+  hs: Float64Array;
+  on: Uint8Array;
+  lo: number;
+  hi: number;
+  fmt: (v: number) => string;
+};
 
 function sample(
   points: readonly FluidPoint[],
@@ -63,11 +72,14 @@ function sample(
   fmt: (v: number) => string,
 ): Frame {
   const ys = new Float64Array(N);
+  const on = new Uint8Array(N);
   let lo = Infinity;
   let hi = -Infinity;
   for (let i = 0; i < N; i++) {
     const v = valueAt(points, t0 + ((t1 - t0) * i) / (N - 1), step);
+    if (v === null) continue;
     ys[i] = v;
+    on[i] = 1;
     if (v < lo) lo = v;
     if (v > hi) hi = v;
   }
@@ -75,8 +87,9 @@ function sample(
   const pad = (hi - lo) * 0.14 || Math.abs(hi) * 0.004 || 1;
   const a = zeroBased ? Math.min(0, lo) : lo - pad;
   const b = hi + pad;
-  const hs = ys.map((v) => (v - a) / (b - a));
-  return { hs, lo: a, hi: b, fmt };
+  // a gap rests on the axis floor, so a morph into or out of it rises from the bottom
+  const hs = ys.map((v, i) => (on[i] ? (v - a) / (b - a) : 0));
+  return { hs, on, lo: a, hi: b, fmt };
 }
 
 const dateFmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
@@ -103,7 +116,7 @@ export function FluidChart({
   axisFormat?: (v: number) => string;
   /** What the chart shows, for screen readers. */
   label: string;
-  /** The axis starts at 0 (volumes). */
+  /** The axis starts at 0 (volumes, the APR). */
   zeroBased?: boolean;
   /** Each point holds until the next (per-period totals): steps, not slopes. */
   step?: boolean;
@@ -167,6 +180,12 @@ export function FluidChart({
   }, []);
 
   /** Draws the current frame; returns whether another one is needed. */
+  /** The series' figure at `t`, "–" in a gap. */
+  const readAt = (t: number) => {
+    const v = valueAt(s.points, t, s.step);
+    return v === null ? "–" : s.format(v);
+  };
+
   const draw = (now: number): boolean => {
     let more = false;
     if (s.to && s.from && s.disp) {
@@ -175,8 +194,9 @@ export function FluidChart({
       for (let i = 0; i < N; i++) s.disp.hs[i] = s.from.hs[i]! + (s.to.hs[i]! - s.from.hs[i]!) * e;
       s.disp.lo = s.from.lo + (s.to.lo - s.from.lo) * e;
       s.disp.hi = s.from.hi + (s.to.hi - s.from.hi) * e;
-      // the labels keep the old series' writing for the first half, the new one's after
+      // the labels and the gaps keep the old series' for the first half, the new one's after
       s.disp.fmt = e < 0.5 ? s.from.fmt : s.to.fmt;
+      s.disp.on = e < 0.5 ? s.from.on : s.to.on;
       if (p < 1) more = true;
     }
     if (s.reveal < 1) {
@@ -190,18 +210,28 @@ export function FluidChart({
     const span = d.hi - d.lo || 1;
     const X = (i: number) => PAD.left + (i / (N - 1)) * iw;
     const Y = (h: number) => PAD.top + (1 - h) * ih;
+    // one stretch of line, and of area down to the axis, per run of samples outside a gap
     let path = "";
-    for (let i = 0; i < N; i++)
-      path += `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(d.hs[i]!).toFixed(1)}`;
+    let fill = "";
+    const base = (PAD.top + ih).toFixed(1);
+    for (let i = 0; i < N;) {
+      if (!d.on[i]) {
+        i++;
+        continue;
+      }
+      const start = i;
+      let run = "";
+      for (; i < N && d.on[i]; i++)
+        run += `${i === start ? "M" : "L"}${X(i).toFixed(1)},${Y(d.hs[i]!).toFixed(1)}`;
+      path += run;
+      fill += `${run}L${X(i - 1).toFixed(1)},${base}L${X(start).toFixed(1)},${base}Z`;
+    }
     line.current?.setAttribute("d", path);
-    area.current?.setAttribute(
-      "d",
-      `${path}L${X(N - 1).toFixed(1)},${PAD.top + ih}L${PAD.left},${PAD.top + ih}Z`,
-    );
+    area.current?.setAttribute("d", fill);
     clip.current?.setAttribute("width", String(PAD.left + easeOut(s.reveal) * (iw + PAD.right)));
     endDot.current?.setAttribute("cx", X(N - 1).toFixed(1));
     endDot.current?.setAttribute("cy", Y(d.hs[N - 1]!).toFixed(1));
-    endDot.current?.setAttribute("opacity", s.reveal >= 1 ? "1" : "0");
+    endDot.current?.setAttribute("opacity", s.reveal >= 1 && d.on[N - 1] ? "1" : "0");
     for (let g = 0; g < GRID; g++) {
       const el = gridText.current[g];
       if (el) el.textContent = d.fmt(d.hi - (span * (g + 0.5)) / GRID);
@@ -221,9 +251,10 @@ export function FluidChart({
       crossLine.current?.setAttribute("x2", x.toFixed(1));
       crossDot.current?.setAttribute("cx", x.toFixed(1));
       crossDot.current?.setAttribute("cy", y.toFixed(1));
+      crossDot.current?.setAttribute("opacity", d.on[Math.round(fi)] ? "1" : "0");
       const t = s.t0 + ((x - PAD.left) / iw) * (s.t1 - s.t0);
       // the figure is read from the series itself, not from the eased line
-      if (tipValue.current) tipValue.current.textContent = s.format(valueAt(s.points, t, s.step));
+      if (tipValue.current) tipValue.current.textContent = readAt(t);
       if (tipTime.current) tipTime.current.textContent = stamp(t);
       if (tip.current) {
         const tw = tip.current.offsetWidth;
@@ -316,8 +347,7 @@ export function FluidChart({
     show(true);
     kick();
     const t = s.t0 + ((next - PAD.left) / iw) * (s.t1 - s.t0);
-    if (live.current)
-      live.current.textContent = `${s.format(valueAt(s.points, t, s.step))}, ${stamp(t)}`;
+    if (live.current) live.current.textContent = `${readAt(t)}, ${stamp(t)}`;
   };
 
   const { w, h } = size;
@@ -334,7 +364,7 @@ export function FluidChart({
       tabIndex={0}
       role="group"
       aria-roledescription="chart"
-      aria-label={`${label}${last ? `, latest ${format(last.v)}` : ""}. Arrow keys read the values.`}
+      aria-label={`${label}${last && last.v !== null ? `, latest ${format(last.v)}` : ""}. Arrow keys read the values.`}
       onPointerMove={(e) => pointAt(e.clientX)}
       onPointerDown={(e) => pointAt(e.clientX)}
       onPointerLeave={leave}

@@ -17,12 +17,14 @@ import {
 } from "../../../apps/web/src/lib/math.ts";
 import { DEMO_MARGIN_BPS } from "../../../apps/web/src/lib/payoutTables.ts";
 import type { TicketEnd, TicketRow } from "../../../apps/web/src/lib/ticketLog.ts";
+import { APR_LABEL, estimateApr, fmtApr, statsByApp } from "../../../apps/web/src/lib/ticketLog.ts";
 import { vaultLine } from "../../../apps/web/src/lib/ticketWords.ts";
 import {
   activityFigures,
   appRisk,
   availableNow,
   bucketFor,
+  CHART_SERIES,
   capTable,
   changePct,
   chartView,
@@ -37,7 +39,19 @@ import {
   windowStart,
   type StrikePoint,
 } from "../../../apps/web/src/lib/vaultFigures.ts";
-import { DAY, DEVNET, SHARE, SPEC, T0, USDC, live, rng, ticketLog, ticketRow } from "./fixtures.ts";
+import {
+  A,
+  DAY,
+  DEVNET,
+  SHARE,
+  SPEC,
+  T0,
+  USDC,
+  live,
+  rng,
+  ticketLog,
+  ticketRow,
+} from "./fixtures.ts";
 
 describe("the header", () => {
   it("lets the next close pay out what the strike would, the live deposits joined", () => {
@@ -314,13 +328,86 @@ describe("the Overview chart", () => {
     ]);
     const day = chartView("volume", "1D", null, log, T0)!;
     expect(day.headline).toBe(5);
-    expect(day.points.reduce((s, p) => s + p.v, 0)).toBe(5);
+    expect(day.points.reduce((s, p) => s + (p.v ?? 0), 0)).toBe(5);
     expect(chartView("volume", "7D", null, log, T0)!.headline).toBe(55);
     expect(bucketFor(DAY)).toBe(3600);
     expect(bucketFor(7 * DAY)).toBe(6 * 3600);
     expect(bucketFor(40 * DAY)).toBe(DAY);
     expect(windowStart("ALL", T0 - 60, T0)).toBe(T0 - 3600);
     expect(windowStart("7D", T0 - 3 * DAY, T0)).toBe(T0 - 3 * DAY);
+  });
+
+  it("shows the APR first, and on arrival", () => {
+    expect(CHART_SERIES.map((x) => x.id)).toEqual(["apr", "price", "deposits", "volume"]);
+    expect(CHART_SERIES.map((x) => x.label)).toEqual([
+      "APR",
+      "Share price",
+      "Deposits",
+      "Ticket volume",
+    ]);
+    expect(APR_LABEL).toBe("APR");
+  });
+
+  it("charts the APR over 7 days trailing, ending on the headline's figure", () => {
+    // 6 tickets an hour over the last 10 days, the read complete back to 14 days
+    const rows = Array.from({ length: 6 * 240 }, (_, i) =>
+      ticketRow({
+        ticket: A(`t${i}`),
+        openedAt: T0 - 600 * i - 30,
+        marginBps: 300n + BigInt(i % 7),
+      }),
+    );
+    const log = ticketLog(rows, { since: T0 - 14 * DAY, from: T0 - 14 * DAY });
+    const inputs = { totalAssets: 2_100n * USDC, protocolShareBps: 20n };
+    const view = chartView("apr", "7D", strikes, log, T0, inputs)!;
+    expect(view.unit).toBe("last 7 days, annualised");
+    const headline = estimateApr(log, inputs.totalAssets, inputs.protocolShareBps, T0).pct!;
+    expect(view.points.at(-1)).toEqual({ t: T0, v: headline });
+    expect(view.headline).toBe(headline);
+    expect(fmtApr(view.headline!)).toMatch(/^≈ \d/);
+    // the whole week, one point per bucket, then now: no gap anywhere
+    expect(view.from).toBe(T0 - 7 * DAY);
+    const bucket = bucketFor(T0 - view.from);
+    expect(view.points[1]!.t - view.points[0]!.t).toBe(bucket);
+    expect(view.points.every((p) => p.v !== null && p.v > 0)).toBe(true);
+    // each point reads its own 7 days, over the assets of the close before it
+    const first = view.points[0]!;
+    const upTo = ticketLog(rows.filter((r) => r.openedAt! <= first.t));
+    expect(first.v).toBe(estimateApr(upTo, 1_000n * USDC, 20n, first.t).pct);
+    const late = view.points.at(-2)!;
+    const lateLog = ticketLog(rows.filter((r) => r.openedAt! <= late.t));
+    expect(late.v).toBe(estimateApr(lateLog, 1_500n * USDC, 20n, late.t).pct);
+    // the change is in percentage points, from the first point
+    expect(view.change).toBeCloseTo(headline - first.v!, 9);
+    // the longer ranges start at the first point whose 7 days the read lists in full
+    for (const range of ["1M", "ALL"] as const) {
+      const long = chartView("apr", range, strikes, log, T0, inputs)!;
+      expect(long.from).toBe(T0 - 7 * DAY);
+      expect(long.points[0]!.v).not.toBeNull();
+    }
+    // without the tickets or the live figures there is nothing to chart
+    expect(chartView("apr", "7D", strikes, null, T0, inputs)).toBeNull();
+    expect(chartView("apr", "7D", strikes, log, T0)).toBeNull();
+    // a read capped inside the last 7 days: every point is a gap, no change to show
+    const capped = ticketLog(rows.slice(0, 60), { truncated: true, from: T0 - 6 * 3600 });
+    const gaps = chartView("apr", "1D", strikes, capped, T0, inputs)!;
+    expect(gaps.points.every((p) => p.v === null)).toBe(true);
+    expect(gaps.headline).toBeNull();
+    expect(gaps.change).toBeNull();
+  });
+
+  it("starts a young vault's APR at its first ticket, a gap only until five are in the week", () => {
+    // 6 tickets an hour over the last 3 days of a program that has no older ones
+    const rows = Array.from({ length: 6 * 72 }, (_, i) =>
+      ticketRow({ ticket: A(`t${i}`), openedAt: T0 - 600 * i - 30 }),
+    );
+    const log = ticketLog(rows, { since: T0 - 14 * DAY });
+    const inputs = { totalAssets: 2_100n * USDC, protocolShareBps: 20n };
+    const view = chartView("apr", "7D", strikes, log, T0, inputs)!;
+    expect(view.from).toBe(rows.at(-1)!.openedAt!);
+    // one ticket in the first window: a gap; every later point has its five
+    expect(view.points[0]!.v).toBeNull();
+    expect(view.points.slice(1).every((p) => p.v !== null)).toBe(true);
   });
 });
 
@@ -373,6 +460,27 @@ describe("the Activity tab", () => {
     expect(f.result).toBe(4n * 998_000n - 7n * USDC);
     expect(f.net).toBe(30n * USDC);
     expect(f.span).toBe("24 h");
+  });
+
+  it("pays no winner for a direct ticket refunded without a draw: its credit back is not paid out", () => {
+    const refunded = ticketRow({
+      ticket: A("r"),
+      price: USDC,
+      vaultCredit: 950_000n,
+      end: { ...end(950_000n, T0 - 30, "expired"), creditReturned: true },
+    });
+    const won = ticketRow({ ticket: A("w"), vaultCredit: 998_000n, end: end(3n * USDC, T0 - 20) });
+    const only = activityFigures(ticketLog([refunded]), [], T0);
+    expect(only.paid).toBe(0n);
+    expect(only.result).toBe(0n);
+    const both = activityFigures(ticketLog([refunded, won]), [], T0);
+    expect(both.paid).toBe(3n * USDC);
+    expect(both.result).toBe(998_000n - 3n * USDC);
+    // the app's own per-app figures: settled, no payout to its customers, nothing kept
+    const s = statsByApp(ticketLog([refunded, won])).get(refunded.integrator)!;
+    expect(s.settled).toBe(2);
+    expect(s.paidOut).toBe(3n * USDC);
+    expect(s.result).toBe(998_000n - 3n * USDC);
   });
 
   it("says over how long when the read was capped inside the day", () => {

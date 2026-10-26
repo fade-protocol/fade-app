@@ -1,4 +1,4 @@
-// Every APR on screen: the vault's estimated APR (Home's vault card, the Vault header, the
+// Every APR on screen: the vault's APR (Home's vault card, the Vault header, the
 // Dashboard), a position's own APR (money-weighted), and the deposit card's "projected per year".
 // Known inputs give known outputs; empty days, capped reads, tiny and huge values, and losses
 // never put NaN or Infinity on screen.
@@ -7,7 +7,12 @@ import { describe, expect, it } from "vitest";
 import { projectedPerYear } from "../../../apps/web/src/lib/actionQuote.ts";
 import { BPS } from "../../../apps/web/src/lib/math.ts";
 import { APR_MIN_SPAN_S, positionApr, type Flow } from "../../../apps/web/src/lib/positionPnl.ts";
-import { APR_MIN_TICKETS, estimateApr, fmtApr } from "../../../apps/web/src/lib/ticketLog.ts";
+import {
+  APR_MIN_TICKETS,
+  APR_WINDOW_S,
+  estimateApr,
+  fmtApr,
+} from "../../../apps/web/src/lib/ticketLog.ts";
 import { DAY, T0, USDC, rng, ticketLog, ticketRow } from "./fixtures.ts";
 
 const tickets = (n: number, over: Parameters<typeof ticketRow>[0] = {}) =>
@@ -15,16 +20,16 @@ const tickets = (n: number, over: Parameters<typeof ticketRow>[0] = {}) =>
     ticketRow({ ticket: `t${i}`.padEnd(32, "1") as Address, ...over }),
   );
 
-describe("the vault's estimated APR", () => {
-  it("annualises the vault margin of the last 24 h over the vault's assets", () => {
-    // 100 tickets of 2 USDC at 3.5 %, 0.2 % protocol share: 3.30 % of 200 USDC = 6.60 USDC a day
+describe("the vault's APR", () => {
+  it("annualises the vault margin of the last 7 days over the vault's assets", () => {
+    // 100 tickets of 2 USDC at 3.5 %, 0.2 % protocol share: 3.30 % of 200 USDC = 6.60 USDC a week
     const apr = estimateApr(ticketLog(tickets(100, { price: 2n * USDC })), 10_000n * USDC, 20n, T0);
     expect(apr.tickets).toBe(100);
     expect(apr.volume).toBe(200n * USDC);
     expect(apr.margin).toBe(6_600_000n);
-    // 6.60 × 365 / 10 000 = 24.09 %
-    expect(apr.pct).toBeCloseTo(24.09, 10);
-    expect(fmtApr(apr.pct!)).toBe("≈ 24%");
+    // 6.60 × 365 / 7 / 10 000 = 3.44 %
+    expect(apr.pct).toBeCloseTo((6.6 * 365 * 100) / 7 / 10_000, 10);
+    expect(fmtApr(apr.pct!)).toBe("≈ 3.4%");
   });
 
   it("takes each ticket's vault margin: its margin less its app share and the protocol share", () => {
@@ -47,10 +52,10 @@ describe("the vault's estimated APR", () => {
     expect(apr.margin).toBe(7n * ((10_000n * 330n) / BPS));
   });
 
-  it("counts only the last 24 h, and says nothing under five tickets or with no assets", () => {
+  it("counts only the last 7 days, and says nothing under five tickets or with no assets", () => {
     const rows = [
       ...tickets(4),
-      ticketRow({ ticket: "old".padEnd(32, "1") as Address, openedAt: T0 - DAY - 1 }),
+      ticketRow({ ticket: "old".padEnd(32, "1") as Address, openedAt: T0 - 7 * DAY - 1 }),
       ticketRow({ ticket: "unknown".padEnd(32, "1") as Address, openedAt: null }),
     ];
     const four = estimateApr(ticketLog(rows), 1_000n * USDC, 20n, T0);
@@ -60,25 +65,53 @@ describe("the vault's estimated APR", () => {
     expect(estimateApr(ticketLog(tickets(5)), 0n, 20n, T0).pct).toBeNull();
     const empty = estimateApr(ticketLog([]), 1_000n * USDC, 20n, T0);
     expect(empty).toEqual({ pct: null, tickets: 0, volume: 0n, margin: 0n });
-    // exactly 24 h old still counts
-    expect(estimateApr(ticketLog(tickets(5, { openedAt: T0 - DAY })), USDC, 20n, T0).tickets).toBe(
-      5,
+    // exactly 7 days old still counts, a second more does not
+    expect(APR_WINDOW_S).toBe(7 * DAY);
+    const edge = (age: number) =>
+      estimateApr(ticketLog(tickets(5, { openedAt: T0 - age })), USDC, 20n, T0).tickets;
+    expect(edge(7 * DAY)).toBe(5);
+    expect(edge(7 * DAY + 1)).toBe(0);
+    // five tickets six days ago and none since: still an APR, not a gap
+    expect(estimateApr(ticketLog(tickets(5, { openedAt: T0 - 6 * DAY })), USDC, 20n, T0).pct).toBe(
+      estimateApr(ticketLog(tickets(5)), USDC, 20n, T0).pct,
     );
   });
 
-  it("scales a read capped inside the day up to a day, and never a read that reached it", () => {
-    const rows = tickets(6);
-    const six = estimateApr(
-      ticketLog(rows, { truncated: true, from: T0 - 6 * 3600 }),
+  it("leaves out a direct ticket refunded without a draw, its vault credit returned", () => {
+    const refund = (i: number) =>
+      ticketRow({
+        ticket: `refund${i}`.padEnd(32, "1") as Address,
+        end: {
+          kind: "expired",
+          payout: USDC,
+          pending: false,
+          creditReturned: true,
+          at: T0,
+          signature: "s" as never,
+        },
+      });
+    const apr = estimateApr(
+      ticketLog([...tickets(5), refund(0), refund(1)]),
       1_000n * USDC,
       20n,
       T0,
     );
-    expect(six.volume).toBe(24n * USDC);
-    expect(six.margin).toBe(4n * 6n * 33_000n);
-    // a capped read whose oldest transaction is older than a day covered the day: no scaling
+    expect(apr).toEqual(estimateApr(ticketLog(tickets(5)), 1_000n * USDC, 20n, T0));
+  });
+
+  it("scales a read capped inside the 7 days up to them, and never a read that reached them", () => {
+    const rows = tickets(6);
+    const six = estimateApr(
+      ticketLog(rows, { truncated: true, from: T0 - DAY }),
+      1_000n * USDC,
+      20n,
+      T0,
+    );
+    expect(six.volume).toBe(42n * USDC);
+    expect(six.margin).toBe(7n * 6n * 33_000n);
+    // a capped read whose oldest transaction is older than 7 days covered them: no scaling
     const full = estimateApr(
-      ticketLog(rows, { truncated: true, from: T0 - 2 * DAY }),
+      ticketLog(rows, { truncated: true, from: T0 - 8 * DAY }),
       1_000n * USDC,
       20n,
       T0,
@@ -91,7 +124,7 @@ describe("the vault's estimated APR", () => {
       20n,
       T0,
     );
-    expect(fresh.volume).toBe((6n * USDC * BigInt(DAY)) / 60n);
+    expect(fresh.volume).toBe((6n * USDC * BigInt(7 * DAY)) / 60n);
     expect(Number.isFinite(fresh.pct!)).toBe(true);
   });
 
@@ -103,14 +136,14 @@ describe("the vault's estimated APR", () => {
         row.price = r.big(1n, 10_000n * USDC);
         row.marginBps = r.big(0n, 1_000n);
         row.appShareBps = r.big(0n, 500n);
-        row.openedAt = T0 - r.int(2 * DAY);
+        row.openedAt = T0 - r.int(14 * DAY);
       }
       const assets = r.big(0n, 10n ** 13n);
       const apr = estimateApr(ticketLog(rows), assets, 20n, T0);
-      const inDay = rows.filter((x) => x.openedAt! >= T0 - DAY);
-      expect(apr.tickets).toBe(inDay.length);
-      expect(apr.volume).toBe(inDay.reduce((s, x) => s + x.price, 0n));
-      const margin = inDay.reduce((s, x) => {
+      const inWeek = rows.filter((x) => x.openedAt! >= T0 - 7 * DAY);
+      expect(apr.tickets).toBe(inWeek.length);
+      expect(apr.volume).toBe(inWeek.reduce((s, x) => s + x.price, 0n));
+      const margin = inWeek.reduce((s, x) => {
         const vm = x.marginBps - x.appShareBps - 20n;
         return vm > 0n ? s + (x.price * vm) / BPS : s;
       }, 0n);
@@ -121,9 +154,48 @@ describe("the vault's estimated APR", () => {
         continue;
       }
       expect(Number.isFinite(apr.pct) && apr.pct >= 0).toBe(true);
-      expect(apr.pct).toBeCloseTo((Number(margin) * 365 * 100) / Number(assets), 6);
+      const expected = (Number(margin) * 365 * 100) / 7 / Number(assets);
+      expect(Math.abs(apr.pct - expected)).toBeLessThanOrEqual(expected * 1e-12);
       expect(fmtApr(apr.pct)).toMatch(/^≈ \d[\d.]*%$/);
     }
+  });
+});
+
+describe("the vault's APR on screen", () => {
+  it("is labelled APR wherever it is shown, its tooltips saying what it is", async () => {
+    const { readFileSync } = await import("node:fs");
+    const files = [
+      "apps/web/src/pages/Vault.tsx",
+      "apps/web/src/pages/Home.tsx",
+      "apps/web/src/pages/Dashboard.tsx",
+      "apps/web/src/pages/vault/Apr.tsx",
+      "apps/web/src/pages/vault/VaultChart.tsx",
+      "apps/web/src/pages/vault/ActionCard.tsx",
+    ];
+    for (const f of files) {
+      const text = readFileSync(new URL(`../../../${f}`, import.meta.url), "utf8");
+      expect(text, f).not.toMatch(/\best(\.|imated)? APR\b/i);
+      expect(text, f).not.toMatch(/—/); // no em dash
+      // the APR's own copy names its 7 days, never the old 24 h
+      if (/Apr\.tsx|VaultChart\.tsx/.test(f)) expect(text, f).not.toMatch(/24 h/);
+    }
+    const tip = readFileSync(
+      new URL("../../../apps/web/src/pages/vault/Apr.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(tip).toContain("the tickets of the last 7 days");
+    expect(tip).toContain("past activity, not a forecast");
+  });
+
+  it("shows its chart figure alone, without a change in percentage points", async () => {
+    const { readFileSync } = await import("node:fs");
+    const chart = readFileSync(
+      new URL("../../../apps/web/src/pages/vault/VaultChart.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(chart).not.toMatch(/" pp"/);
+    expect(chart).toContain('const showsChange = series !== "apr";');
+    expect(chart).toContain("{showsChange && view.change !== null && (");
   });
 });
 
@@ -199,7 +271,7 @@ describe("a position's own APR", () => {
 });
 
 describe("projected per year, on the deposit card", () => {
-  it("is the deposit at the estimated APR, rounded down", () => {
+  it("is the deposit at the vault's APR, rounded down", () => {
     expect(projectedPerYear(1_000n * USDC, 22)).toBe(220n * USDC);
     expect(projectedPerYear(1_000n * USDC, 3.456)).toBe(34_600_000n);
     expect(projectedPerYear(1n, 22)).toBe(0n);

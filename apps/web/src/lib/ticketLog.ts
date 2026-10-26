@@ -1,8 +1,10 @@
-// Tickets read back from the chain: the program's recent ones (live draws, the vault's
-// estimated APR, what each app brought in) and one wallet's (its dashboard). Every figure
-// comes from the TicketOpened / TicketSettled / TicketExpired events, through the same
-// transaction cache as the vault's history: a transaction is read once per browser.
-import type { Address, Signature } from "@solana/kit";
+// Tickets read back from the chain: the program's recent ones (live draws, the vault's APR,
+// what each app brought in) and one wallet's (its dashboard, when the keeper cannot serve its
+// history: lib/keeperWallet). Every figure comes from the ticket events of both paths (the rows
+// themselves: lib/ticketRows, which the keeper shares), through the same transaction cache as
+// the vault's history: a transaction is read once per browser.
+import { fetchEncodedAccounts, type Address, type Signature } from "@solana/kit";
+import { getPayoutTableDecoder } from "../../../../clients/js/src/generated/fade";
 import { PROGRAM } from "./config";
 import { txDecoder, type FadeEvent } from "./events";
 import { ata, integratorPda } from "./fade";
@@ -12,49 +14,49 @@ import { rpc } from "./rpc";
 import { findTicketEnd } from "./ticket";
 import { eventsFor } from "./txCache";
 import { BOOSTER_PAYOUT } from "./ticketKind";
+import {
+  delivered,
+  roundTicketEnd,
+  ticketLogOf,
+  withBeaconMargins,
+  type Sig,
+  type TicketEnd,
+  type TicketLog,
+  type TicketRow,
+} from "./ticketRows";
+import { boundedTickets, walletRowsOf, type WalletTicketList } from "./walletHistory";
 
 export { kindOf, type TicketKind } from "./ticketKind";
+export {
+  creditBack,
+  delivered,
+  directExpiryEnd,
+  joinedRow,
+  roundTicketEnd,
+  ticketLogOf,
+  winPayout,
+  withBeaconMargins,
+  type BeaconTicket,
+  type LoneEnd,
+  type TicketEnd,
+  type TicketLog,
+  type TicketRow,
+} from "./ticketRows";
 import { MINUS, odds } from "./format";
-
-export type TicketEnd = {
-  kind: "settled" | "expired";
-  /** Micro-USDC paid to the beneficiary; 0 for no win or an expiry. */
-  payout: bigint;
-  /** The payout waits in escrow: the beneficiary could not receive it. */
-  pending: boolean;
-  at: number | null;
-  signature: Signature;
-};
-
-export type TicketRow = {
-  ticket: Address;
-  integrator: Address;
-  beneficiary: Address;
-  price: bigint;
-  payoutMax: bigint;
-  vaultCredit: bigint;
-  marginBps: bigint;
-  appShareBps: bigint;
-  openedAt: number | null;
-  openSig: Signature;
-  end: TicketEnd | null;
-};
-
-/** A settlement read without its opening (the opening is older than what was read). */
-export type LoneEnd = TicketEnd & { ticket: Address; integrator: Address };
-
-export type TicketLog = {
-  /** Newest first. */
-  rows: TicketRow[];
-  /** Settlements whose opening is beyond the window read, newest first. */
-  loneEnds: LoneEnd[];
-  /** Unix seconds of the oldest transaction read; null when none was. */
-  from: number | null;
-  /** The read stopped at its cap before reaching the start of the window. */
-  truncated: boolean;
-};
-
-type Sig = { signature: Signature; blockTime: number | null };
+import { volumeSums } from "./vaultViews";
+export { appShareOf, statsByApp, type AppStats } from "./vaultViews";
+export {
+  APR_LABEL,
+  APR_MIN_TICKETS,
+  APR_WINDOW_S,
+  aprSeries,
+  coveredFrom,
+  estimateApr,
+  isRefunded,
+  vaultMarginOf,
+  type AprEstimate,
+  type AssetsPoint,
+} from "./apr";
 
 /** Successful signatures of `account`, newest first, back to `since` or `max` of them. */
 async function signaturesSince(account: Address, since: number, max: number): Promise<Sig[]> {
@@ -89,51 +91,45 @@ async function build(sigs: Sig[], cap: number, since: number): Promise<TicketLog
     sigs.map((s) => s.signature),
     await txDecoder(),
   );
-  const rows = new Map<Address, TicketRow>();
-  const ends = new Map<Address, LoneEnd>();
-  for (const s of [...sigs].reverse()) {
-    const tx = known.get(s.signature);
-    if (!tx) continue;
-    for (const e of tx.events as FadeEvent[]) {
-      if (e.kind === "TicketOpened") {
-        const d = e.data;
-        rows.set(d.ticket, {
-          ticket: d.ticket,
-          integrator: d.integrator,
-          beneficiary: d.beneficiary,
-          price: d.price,
-          payoutMax: d.payoutMax,
-          vaultCredit: d.vaultCredit,
-          marginBps: d.marginBps,
-          appShareBps: d.appShareBps,
-          openedAt: s.blockTime,
-          openSig: s.signature,
-          end: ends.get(d.ticket) ?? null,
-        });
-        ends.delete(d.ticket);
-      } else if (e.kind === "TicketSettled" || e.kind === "TicketExpired") {
-        const end: LoneEnd = {
-          kind: e.kind === "TicketSettled" ? "settled" : "expired",
-          payout: e.kind === "TicketSettled" ? e.data.payout : 0n,
-          pending: e.kind === "TicketSettled" ? e.data.pending : false,
-          at: s.blockTime,
-          signature: s.signature,
-          ticket: e.data.ticket,
-          integrator: e.data.integrator,
-        };
-        const row = rows.get(e.data.ticket);
-        if (row) row.end = end;
-        else ends.set(e.data.ticket, end);
-      }
+  return readBeaconMargins(ticketLogOf(sigs, known, cap, since));
+}
+
+/** `Σ p·m` of each registered payout table, by address: a table never changes once registered. */
+const tableLhs = new Map<Address, bigint>();
+
+/**
+ * The `Σ p·m` of the payout tables of the log's beacon rows, read once per browser. A table that
+ * cannot be read is left out, and read again on the next call.
+ */
+async function payoutTableLhs(log: Pick<TicketLog, "rows">): Promise<ReadonlyMap<Address, bigint>> {
+  const missing = [
+    ...new Set(
+      log.rows.flatMap((r) =>
+        r.beacon && !tableLhs.has(r.beacon.payoutTable) ? [r.beacon.payoutTable] : [],
+      ),
+    ),
+  ];
+  if (missing.length) {
+    try {
+      const accounts = await fetchEncodedAccounts(rpc, missing, { commitment: "confirmed" });
+      accounts.forEach((a, i) => {
+        if (!a.exists || a.programAddress !== PROGRAM) return;
+        try {
+          tableLhs.set(missing[i]!, getPayoutTableDecoder().decode(a.data).lhs);
+        } catch {
+          // not a payout table
+        }
+      });
+    } catch {
+      // unreadable now: those rows keep a zero margin until the next read
     }
   }
-  const oldest = sigs.at(-1)?.blockTime ?? null;
-  return {
-    rows: [...rows.values()].reverse(),
-    loneEnds: [...ends.values()].reverse(),
-    from: oldest,
-    truncated: sigs.length >= cap && (oldest === null || oldest > since),
-  };
+  return tableLhs;
+}
+
+/** The log with its beacon rows' margins, their payout tables read once per browser. */
+export async function readBeaconMargins<L extends Pick<TicketLog, "rows">>(log: L): Promise<L> {
+  return withBeaconMargins(log, await payoutTableLhs(log));
 }
 
 /** How far back the program's tickets are read: the per-app table's window. */
@@ -158,13 +154,38 @@ export function fetchProgramTickets(): Promise<TicketLog> {
   return programInFlight;
 }
 
+/**
+ * How a beacon ticket ended, from its own history: every settlement, return and claim of what
+ * they parked names its round ticket. Null while it has not ended (or the RPC has not indexed
+ * its end yet).
+ */
+async function findRoundTicketEnd(ticket: Address): Promise<TicketEnd | null> {
+  const sigs = await signaturesSince(ticket, 0, 8);
+  const known = await eventsFor(
+    sigs.map((s) => s.signature),
+    await txDecoder(),
+  );
+  let claimed = false;
+  let end: TicketEnd | null = null;
+  for (const s of sigs)
+    for (const e of (known.get(s.signature)?.events ?? []) as FadeEvent[]) {
+      if (e.kind === "RoundPayoutClaimed" && e.data.ticket === ticket) claimed = true;
+      else if (
+        (e.kind === "RoundTicketSettled" || e.kind === "RoundTicketReturned") &&
+        e.data.ticket === ticket
+      )
+        end ??= roundTicketEnd(e, s);
+    }
+  return end && claimed ? delivered(end) : end;
+}
+
 /** How many settlements of other apps' tickets one read resolves through the ticket's own history. */
 const RESOLVE_PER_READ = 8;
 const WALLET_MAX_SIGS = 600;
 
-export type WalletTickets = {
+/** One wallet's tickets (lib/walletHistory): the keeper's history, or the app's own reads. */
+export type WalletTickets = WalletTicketList & {
   owner: Address;
-  rows: TicketRow[];
   integrator: Address;
   /** The wallet's USDC account: the beneficiary of its own tickets. */
   usdcAccount: Address;
@@ -173,8 +194,11 @@ export type WalletTickets = {
 /**
  * The tickets of one wallet: those it funded as its own app (the demos open them under the wallet's
  * integrator record) and those paying out to it (its USDC account is the beneficiary). Reads the
- * integrator record's history and the USDC account's; a settlement of another app's ticket that
- * paid nothing does not touch the wallet, so the newest few are looked up on the ticket itself.
+ * integrator record's history and the USDC account's. The end of another app's ticket may touch
+ * neither: a direct settlement that paid nothing, a beacon settlement that did not pay (it names
+ * the beneficiary only for a win), a beacon return (its price goes to the funder) or forfeiture.
+ * The newest few such tickets are looked up on the ticket itself. The fallback of the keeper's
+ * history (lib/keeperWallet).
  */
 export async function fetchWalletTickets(owner: Address): Promise<WalletTickets> {
   const [integrator, usdcAccount] = await Promise.all([integratorPda(owner), ata(owner)]);
@@ -186,17 +210,21 @@ export async function fetchWalletTickets(owner: Address): Promise<WalletTickets>
   for (const s of [...a, ...b]) merged.set(s.signature, s);
   const sigs = [...merged.values()].sort((x, y) => (y.blockTime ?? 0) - (x.blockTime ?? 0));
   const log = await build(sigs, Infinity, 0);
-  const mine = log.rows.filter(
-    (r) => r.integrator === integrator || r.beneficiary === usdcAccount || r.beneficiary === owner,
-  );
+  const keys = { owner, integrator, usdcAccount };
+  const mine = walletRowsOf(log.rows, keys);
   const now = Date.now() / 1000;
   const unresolved = mine
     .filter((r) => !r.end && r.integrator !== integrator && now - (r.openedAt ?? now) > 60)
     .slice(0, RESOLVE_PER_READ);
   await Promise.all(
     unresolved.map(async (r) => {
+      if (r.beacon) {
+        r.end = await findRoundTicketEnd(r.ticket).catch(() => null);
+        return;
+      }
       const end = await findTicketEnd(r.ticket).catch(() => null);
-      if (!end) return;
+      // a closed ticket's end is read from its transactions, so it has its signature
+      if (!end || !end.signature) return;
       r.end =
         end.kind === "settled"
           ? {
@@ -206,10 +234,17 @@ export async function fetchWalletTickets(owner: Address): Promise<WalletTickets>
               at: null,
               signature: end.signature,
             }
-          : { kind: "expired", payout: 0n, pending: false, at: null, signature: end.signature };
+          : {
+              kind: "expired",
+              payout: end.refund?.amount ?? 0n,
+              pending: end.refund?.pending ?? false,
+              ...(end.refund ? { creditReturned: true } : {}),
+              at: null,
+              signature: end.signature,
+            };
     }),
   );
-  return { owner, rows: mine, integrator, usdcAccount };
+  return { owner, integrator, usdcAccount, ...boundedTickets(mine, keys, Infinity) };
 }
 
 // --- what a ticket was ---------------------------------------------------------------------
@@ -221,8 +256,12 @@ export async function fetchWalletTickets(owner: Address): Promise<WalletTickets>
  * whose payout reaches the worst case, `ceil(payout · BPS / price)`, and its probability the
  * largest that keeps the margin, `floor((BPS − margin) · P_SCALE / m)`: the odds the demo showed.
  */
-export function oddsOf(r: Pick<TicketRow, "price" | "payoutMax" | "marginBps">) {
+export function oddsOf(
+  r: Pick<TicketRow, "price" | "payoutMax" | "marginBps"> & { beacon?: unknown },
+) {
   if (r.payoutMax === 0n || r.price <= 0n || r.marginBps >= BPS) return "–";
+  // a beacon ticket's margin is 0 until its payout table is read: its odds are not known yet
+  if (r.beacon && r.marginBps === 0n) return "–";
   const p =
     r.payoutMax === r.price * BOOSTER_PAYOUT
       ? boosterWinP(boosterPayoutTableAt(r.price * PACK_TICKETS, r.marginBps))
@@ -231,56 +270,7 @@ export function oddsOf(r: Pick<TicketRow, "price" | "payoutMax" | "marginBps">) 
   return odds(p).oneIn;
 }
 
-// --- the vault's estimated APR -------------------------------------------------------------
-
-const DAY = 86400;
-
-export type AprEstimate = {
-  /** Percent a year, or null when the last 24 h hold too few tickets to say. */
-  pct: number | null;
-  tickets: number;
-  /** Micro-USDC of ticket prices over the last 24 h (extrapolated when the read was capped). */
-  volume: bigint;
-  /** Micro-USDC the vault's margin kept on that volume. */
-  margin: bigint;
-};
-
-/** Fewer tickets than this in 24 h and the estimate is not shown. */
-export const APR_MIN_TICKETS = 5;
-
-/**
- * The vault margin earned on the last 24 h of ticket volume, annualised over the vault's assets
- * now. Each ticket's vault margin is its margin less its app share and the protocol share. A
- * read capped before 24 h scales its volume up to a day.
- */
-export function estimateApr(
-  log: TicketLog,
-  totalAssets: bigint,
-  protocolShareBps: bigint,
-  now: number,
-): AprEstimate {
-  const since = now - DAY;
-  let volume = 0n;
-  let margin = 0n;
-  let tickets = 0;
-  for (const r of log.rows) {
-    if (r.openedAt === null || r.openedAt < since) continue;
-    tickets += 1;
-    volume += r.price;
-    const vm = r.marginBps - r.appShareBps - protocolShareBps;
-    if (vm > 0n) margin += (r.price * vm) / BPS;
-  }
-  if (log.truncated && log.from !== null && log.from > since) {
-    const span = BigInt(Math.max(60, now - log.from));
-    volume = (volume * BigInt(DAY)) / span;
-    margin = (margin * BigInt(DAY)) / span;
-  }
-  const pct =
-    tickets < APR_MIN_TICKETS || totalAssets === 0n
-      ? null
-      : (Number(margin) * 365 * 100) / Number(totalAssets);
-  return { pct, tickets, volume, margin };
-}
+// --- the vault's APR (lib/apr) ---------------------------------------------------------------
 
 /**
  * "≈ 22%" / "≈ 3.4%" / "≈ 0.08%", "≈ −12%" for a loss: the decimals follow the size, whatever
@@ -294,53 +284,20 @@ export function fmtApr(pct: number): string {
   return `≈ ${pct < 0 && /[1-9]/.test(text) ? MINUS : ""}${text}%`;
 }
 
-// --- what each app brought in ----------------------------------------------------------------
+// --- what each app brought in, the ticket volume (lib/vaultViews) ---------------------------
 
-export type AppStats = {
-  tickets: number;
-  volume: bigint;
-  /** The vault's result on the tickets read both ends of: its credit, less what it paid. */
-  result: bigint;
-  settled: number;
-  appShare: bigint;
-  /** Payouts to the app's customers. */
-  paidOut: bigint;
-};
-
-/** Per integrator record, over the tickets read. */
-export function statsByApp(log: TicketLog): Map<Address, AppStats> {
-  const m = new Map<Address, AppStats>();
-  for (const r of log.rows) {
-    let s = m.get(r.integrator);
-    if (!s) {
-      s = { tickets: 0, volume: 0n, result: 0n, settled: 0, appShare: 0n, paidOut: 0n };
-      m.set(r.integrator, s);
-    }
-    s.tickets += 1;
-    s.volume += r.price;
-    s.appShare += (r.price * r.appShareBps) / BPS;
-    if (r.end) {
-      s.settled += 1;
-      s.result += r.vaultCredit - r.end.payout;
-      s.paidOut += r.end.payout;
-    }
-  }
-  return m;
-}
-
-/** Ticket volume per bucket of `bucketS` seconds over [from, to], as chart points at each bucket's start (USDC). */
+/**
+ * Ticket volume per bucket of `bucketS` seconds over [from, to], as chart points at each bucket's
+ * start (USDC). A refunded beacon ticket is left out.
+ */
 export function volumeSeries(
   log: TicketLog,
   from: number,
   to: number,
   bucketS: number,
 ): { t: number; v: number }[] {
-  const n = Math.max(1, Math.ceil((to - from) / bucketS));
-  const sums = new Array<number>(n).fill(0);
-  for (const r of log.rows) {
-    if (r.openedAt === null || r.openedAt < from || r.openedAt > to) continue;
-    const i = Math.min(n - 1, Math.floor((r.openedAt - from) / bucketS));
-    sums[i]! += Number(r.price) / 1e6;
-  }
-  return sums.map((v, i) => ({ t: from + i * bucketS, v }));
+  return volumeSums(log, from, to, bucketS).map((v, i) => ({
+    t: from + i * bucketS,
+    v: Number(v) / 1e6,
+  }));
 }
